@@ -1,6 +1,6 @@
 # RaJePy
 ## Overview
-**Ra**dio **Je**ts in **Py**thon (VaJePy) is a Python package which conducts radiative transfer calculations towards a power-law-based, physical model of an ionised jet. Data products from those calculations are subsequently used as the models to conduct synthetic, interferometric radio imaging from.
+**Ra**dio **Je**ts in **Py**thon (RaJePy) is a Python package which conducts radiative transfer calculations towards a power-law-based, physical model of an ionised jet. Data products from those calculations are subsequently used as the models to conduct synthetic, interferometric radio imaging from.
 
 ## Purpose
 - Inform radio astronomers on the significance of the detrimental effects of the interferometric imaging of ionised jets
