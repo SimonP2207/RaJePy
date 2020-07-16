@@ -110,7 +110,7 @@ Model grid dimensions
 
 | Parameter/key | Description                                                                               | Type          | Example |
 |---------------|-------------------------------------------------------------------------------------------|---------------|---------|
-| `"n_x"`       | Number of cells in $x$-axis                                                               | `int`         | 100     |
+| `"n_x"`       | Number of cells in $$x$$-axis                                                               | `int`         | 100     |
 | `"n_y"`       | Number of cells in $y$-axis                                                               | `int`         | 100     |
 | `"n_z"`       | Number of cells in $z$-axis                                                               | `int`         | 400     |
 | `"l_z"`       | Full length of z-axis/bi-polar jet (arcsec). Overrides `"n_x"`/`"n_y"`/`"n_z"` parameters | `float`, None | 2.0     |
