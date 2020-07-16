@@ -163,9 +163,129 @@ Jet mass loss variability parameters
 
 Other lines of code at the bottom of `example-model-params.py` (below the comment `# DO NOT CHANGE BELOW!`) derive various required jet parameters. **Please do not change those lines!** As for the required model parameters
 
+### `ModelRun` class
+The purpose of the `ModelRun` class is to handle directory/file manipulation and perform synthetic observations via [casa](https://casa.nrao.edu/), their subsequent measurements and other analyses conducted on a `JetModel` instance.
 
-### Requirements:
-#### Python standard library packages:
+`ModelRun`'s `__init__` method takes two compulsory arguments, `jetmodel` and `params`:
+- `jetmodel`: `JetModel` instance to conduct all analyses and observations upon
+- `params` : Full path to the pipeline parameters file, an example for which is `RaJePy/files/example-pipeline-params.py` (see a full description below)
+
+#### Pipeline parameter file
+For the pipeline parameter file, a full-working example is given in `RaJePy/files/example-pipeline-params.py` which contains the following:
+
+```python
+params = {'times': np.linspace(0., 5., 21),  # yr
+          'freqs': np.array([0.058, 0.142, 0.323, 0.608, 1.5, 3.0, 6.,    # Hz
+                             10., 22., 33., 44.]) * 1e9,
+          't_obs': np.array([28800, 28800, 28800, 28800, 1200, 1200,     # sec
+                             1200, 1200, 1200, 1800, 2400]),
+          'tscps': np.array([('LOFAR', '0'), ('LOFAR', '0'),  # (tscop, config)
+                             ('GMRT', '0'), ('GMRT', '0'), ('VLA', 'A'),
+                             ('VLA', 'A'), ('VLA', 'A'), ('VLA', 'A'),
+                             ('VLA', 'A'), ('VLA', 'A'), ('VLA', 'A')]),
+          't_ints': np.array([5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]),    # secs
+          'bws': np.array([30e6, 48e6, 32e6, 32e6, 1e9, 2e9, 2e9, 4e9, 4e9,
+                           4e9, 8e9]),  # Hz
+          'nchans': np.array([1] * 11),       # int
+          'min_el': 20.,    # Minimum elevation for synthetic observations (deg)
+          'dcys': {"model_dcy": os.sep.join([os.path.expanduser('~'),
+                                             "Desktop", "VaJePyTest"])}}
+```
+This shows a python `dict` containing 9 keys associated with relevant values. For the first 8 of those 9 keys, their logical purpose and description of their associated values are given in the table below.
+
+| Parameter/key | Description                                                    | Type                                       | Example                                                                     |
+|---------------|----------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------|
+| `"times"`     | Observational times (yr)                                       | `numpy.array` with `dtype=float`           | `numpy.linspace(0., 5., 4)`                                                 |
+| `"freqs"`     | Observational frequencies (Hz)                                 | `numpy.array` with `dtype=float`           | `numpy.array([1e9, 5e9, 2e10, 5e10])`                                       |
+| `"t_obs"`     | Total scan times (s)                                           | `numpy.array` with `dtype=int`             |                                                                             |
+| `"tscps"`     | Telescope names and configurations                             | `numpy.array` with `dtype=tuple(str, str)` | `numpy.array([('VLA', 'A'), ('EMERLIN', '0'), ('VLA', 'B'), ('VLA', 'C')])` |
+| `"t_ints"`    | Visibility integration times (s)                               | `numpy.array` with `dtype=int`             | `numpy.array([5, 3, 3, 2])`                                                 |
+| `"bws"`       | Bandwidths (Hz)                                                | `numpy.array` with `dtype=float`           | `numpy.array([0.5e9, 2e9, 2e9, 4e9])`                                       |
+| `"nchans"`    | Number of channels evenly dividing bandwidth [not implemented] | `numpy.array` with `dtype=int`             | `numpy.array([1, 1, 1, 1])`                                                 |
+| `"min_el"`    | Minimum elevation to conduct synthetic observations (deg)      | `float`                                    | `20.`                                                                       |
+
+##### `params['dcys']`
+Relevant directories for file operations of pipeline
+
+| Parameter/key | Description                                                                     | Type  | Example                     |
+|---------------|---------------------------------------------------------------------------------|-------|-----------------------------|
+| `'model_dcy'` | Full path for all products and directories associated with `ModelRun` execution | `str` | `/my/rajepy/exec/directory` |
+
+
+### Executing a complete pipeline
+After creating instances of the `JetModel` and `ModelRun` classes, execution of the desired synthetic observations etc. takes place via the `ModelRun` class' `execute` method. A complete script for execution of a synthetic observing and model calculation run would be:
+
+```python
+import os
+import RaJePy as rjp
+
+model_params = 'model-params.py'
+pline_params = 'pipeline-params.py'
+log_file = 'TestJet.log'
+
+jm = rjp.JetModel(model_params, log=log_file)
+pline = rjp.ModelRun(jm, pline_params)
+
+pline.execute(simobserve=True, dryrun=False)
+```
+
+#### `ModelRun.execute` method
+The `execute` method runs the complete pipeline, producing relevant plots, `.fits` model files, measurement sets and final clean image `.fits` files. It takes 5, optional, keyword-arguments:
+
+| `kwarg`      | Description                                                                                  | Type   |
+|--------------|----------------------------------------------------------------------------------------------|--------|
+| `simobserve` | Whether to conduct synthetic observations on the model `.fits` file                          | `bool` |
+| `verbose`    | Verbose output to the terminal?                                                              | `bool` |
+| `dryrun`     | Whether to execute a dry run, without actually running any calculations (for testing)        | `bool` |
+| `resume`     | Whether to resume a previously saved run (if saved model file and saved pipeline file exist) | `bool` |
+| `clobber`    | Whether to redo and overwrite previously written files [soon to be deprecated]               | `bool` |
+
+### Data products
+If `/example/dcy` was given for `params['dcys']['model_dcy']` in the pipeline parameter file, the output from the above code would be:
+
+```sh
+/example/dcy/  # Set by user in pipeline parameter file's params['dcys']['model_dcy']
+├──ModelRun_YYYY-MM-DD-HH:MM:SS.log  # Generated log file by JetModel
+├──jetmodel.save  # Saved JetModel instance (large file size!)
+├──modelrun.save  # Save ModelRun instance
+├──pointings.ptg  # Synthetic observation pointing file
+├──Day0/  # First epoch directory for modelling/observations
+│  ├──ModelPlot.pdf  # Plot of resulting physical model
+│  ├──1000MHz/  # Directory containing data products for first radio frequency
+│  │  ├──RadioPlot.pdf  # Plot of model fluxes, optical depths and emission measures
+│  │  ├──DDMMYYYY_HHMMSS.py  # Casa script to be executed, generated by ModelRun
+│  │  ├──DDMMYYYY_HHMMSS.log  # Generated logfile by JetModel
+│  │  ├──EM_Day0_1000MHz.fits  # Model emission measure image
+│  │  ├──Flux_Day0_1000MHz.fits  # Model radio flux image
+│  │  ├──Tau_Day0_1000MHz.fits  # Model optical depth image
+│  │  ├──SynObs.vla.a.noisy.imaging.fits  # Final clean image
+│  │  ├──SynObs.vla.a.noisy.imaging.estimates  # Input to casa.imfit
+│  │  ├──SynObs.vla.a.noisy.imaging.imfit  # Results of Gaussian fits to jet
+│  │  └──SynObs/  # All files generated by CASA
+│  │     ├──SynObs.vla.a.ms/  # No-noise measurement set (casa.simobserve)
+│  │     ├──SynObs.vla.a.noisy.ms/  # Noisy measurement set (casa.simobserve)
+│  │     ├──SynObs.vla.a.noisy.imaging.image/  # Clean image (casa.tclean)
+│  │     ├──SynObs.vla.a.noisy.imaging.mask/  # Clean mask (casa.tclean)
+│  │     ├──SynObs.vla.a.noisy.imaging.model/  # Deconvolved model image (casa.tclean)
+│  │     ├──SynObs.vla.a.noisy.imaging.pb/  # Primary beam image (casa.tclean)
+│  │     ├──SynObs.vla.a.noisy.imaging.psf/  # Point spread function image (casa.tclean)
+│  │     ├──SynObs.vla.a.noisy.imaging.residual/  # Residual map (casa.tclean)
+│  │     ├──SynObs.vla.a.noisy.imaging.sumwt/  # Sum-of-weights image (casa.tclean)
+│  │     ├──SynObs.vla.a.skymodel/  # Input model image (casa.simobserve)
+│  │     └──SynObs.vla.a.skymodel.flat/  # Flattened input model image (casa.simobserve)
+│  ├──5000MHz/  # Directory containing data products for second radio frequency
+│  |  └──...
+│  ├──20000MHz/  # Directory containing data products for third radio frequency
+│  |  └──...
+│  └──50000MHz/  # Directory containing data products for fourth radio frequency
+│  |  └──...
+├──Day100/  # Second epoch directory for modelling/observations
+│  └──...
+└──...
+```
+
+## Requirements:
+### Python standard library packages:
 - collections.abc
 - errno
 - os
@@ -174,7 +294,7 @@ Other lines of code at the bottom of `example-model-params.py` (below the commen
 - sys
 - time
 - warnings
-#### Other Python packages:
+### Other Python packages:
 - astropy (developed with 4.0)
 - imageio (developed with 2.8.0)
 - matplotlib (developed with 3.2.1)
@@ -182,10 +302,11 @@ Other lines of code at the bottom of `example-model-params.py` (below the commen
 - numpy (developed with 1.18.1)
 - pandas (developed with 1.0.5)
 - scipy (developed with 1.3.1)
-#### System-based installations
+### System-based installations
 - Working [casa](https://casa.nrao.edu/) installation (developed with 5.6.2-2) with casa's executable located in `$PATH`
 
-### Future work and direction
+## Future work and direction
 - Incorporate inclination into jet model
 - Incorporate position angle into jet model
 - Parallelise code, especially different synthetic observations and model calculations
+- Implement more than one channel across bandwidth for more accurate multi-frequency synthesis
