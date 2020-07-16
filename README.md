@@ -157,9 +157,9 @@ Jet mass loss variability parameters
 
 | Parameter/key | Description                                                        | Type                        | Example                        |
 |---------------|--------------------------------------------------------------------|-----------------------------|--------------------------------|
-| `"t_0"`       | Burst peak times (yr)                                              | `numpy.array` (dtype=float) | `numpy.array([0., 1., 2.])`    |
-| `"hl"`        | Burst `half-lives`, i.e. FWHM in time (yr)                         | `numpy.array` (dtype=float) | `numpy.array([0.2, 0.1, 0.8])` |
-| `"chi"`       | Burst factors (multiple of jet's steady state mass loss rate       | `numpy.array` (dtype=float) | `numpy.array([10., 5., 2.])`   |
+| `"t_0"`       | Burst(s) peak times (yr)                                              | `numpy.array` (dtype=float) | `numpy.array([0., 1., 2.])`    |
+| `"hl"`        | Burst(s) 'half-lives', i.e. FWHM in time (yr)                         | `numpy.array` (dtype=float) | `numpy.array([0.2, 0.1, 0.8])` |
+| `"chi"`       | Burst(s) factors (multiple of jet's steady state mass loss rate       | `numpy.array` (dtype=float) | `numpy.array([10., 5., 2.])`   |
 
 Other lines of code at the bottom of `example-model-params.py` (below the comment `# DO NOT CHANGE BELOW!`) derive various required jet parameters. **Please do not change those lines!** As for the required model parameters
 
