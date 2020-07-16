@@ -26,4 +26,4 @@ params = {'times': np.linspace(0., 5., 21),
           'nchans': np.array([1] * 11),       # int
           'min_el': 20.,    # Minimum elevation for synthetic observations (deg)
           'dcys': {"model_dcy": os.sep.join([os.path.expanduser('~'),
-                                             "Desktop", "VaJePyTest"])}}
+                                             "Desktop", "RaJePyTest"])}}
