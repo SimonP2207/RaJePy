@@ -76,7 +76,7 @@ class JetModel:
 
         return new_jm
 
-    def __init__(self, params, verbose=True, log=None):
+        def __init__(self, params, verbose=True, log=None):
         """
 
         Parameters
