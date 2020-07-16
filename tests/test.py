@@ -10,7 +10,7 @@ import numpy as np
 import scipy.constants as con
 import matplotlib.pylab as plt
 from mpmath import gammainc
-from classes import JetModel
+from RaJePy import JetModel
 
 
 def flux_expected_r86(jm, freq, y_max):

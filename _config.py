@@ -1,5 +1,5 @@
 """
-VaJePy configuration file.
+RaJePy configuration file.
 
 Purpose:
     - Defines the locations of VaJePy libraries and data files.

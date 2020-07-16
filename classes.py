@@ -26,13 +26,12 @@ from scipy.integrate import dblquad, tplquad
 from shutil import get_terminal_size
 from matplotlib.colors import LogNorm
 
-from VaJePy import logger
-from VaJePy.maths import geometry as mgeom
-from VaJePy.maths import physics as mphys
-from VaJePy.plotting import functions as pfunc
+from RaJePy import logger
+from RaJePy.maths import geometry as mgeom
+from RaJePy.maths import physics as mphys
+from RaJePy.plotting import functions as pfunc
 
 from warnings import filterwarnings
-
 filterwarnings("ignore", category=RuntimeWarning)
 
 
@@ -1739,9 +1738,9 @@ class ModelRun:
 
         if simobserve:
             from datetime import datetime, timedelta
-            import VaJePy.casa as casa
-            import VaJePy.casa.tasks as tasks
-            import VaJePy.maths as maths
+            import RaJePy.casa as casa
+            import RaJePy.casa.tasks as tasks
+            import RaJePy.maths as maths
 
             # Make pointing file
             ptgfile = self.model_dcy + os.sep + 'pointings.ptg'
@@ -2431,11 +2430,11 @@ class PointingScheme(object):
 
 
 if __name__ == '__main__':
-    from VaJePy.classes import JetModel, ModelRun
-    import VaJePy as vjp
+    from RaJePy.classes import JetModel, ModelRun
+    import RaJePy as rjp
 
-    jm = JetModel(vjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
-    pline = ModelRun(jm, vjp.cfg.dcys['files'] + os.sep +
+    jm = JetModel(rjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
+    pline = ModelRun(jm, rjp.cfg.dcys['files'] + os.sep +
                      'example-pipeline-params.py')
 
     pline.execute(simobserve=True, dryrun=False)

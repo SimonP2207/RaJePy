@@ -5,8 +5,8 @@ import scipy.constants as con
 import pandas as pd
 from mpmath import gammainc
 
-from VaJePy import _config as cfg
-from VaJePy import _constants as cnsts
+from RaJePy import _config as cfg
+from RaJePy import _constants as cnsts
 
 def nu_rrl(n, dn=1, atom="H"):
     """

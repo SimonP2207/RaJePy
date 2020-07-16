@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-VAriable JEts in PYthon main program.
+RAdio JEts in PYthon test program.
 """
 import os, sys, shutil
-from classes import JetModel, ModelRun
+from RaJePy import JetModel, ModelRun
 
 if __name__ == '__main__':
     jet_param_file = sys.argv[1]

@@ -13,7 +13,7 @@ from the outputted text file.
 import os
 import numpy as np
 import pandas as pd
-import VaJePy._config as config
+import RaJePy._config as config
 
 fname = 'Observatories_table.txt'
 fname = os.sep.join([os.path.expanduser('~'), 'Nextcloud', 'PythonLibraries',
