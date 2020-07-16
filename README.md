@@ -100,7 +100,7 @@ This shows a python `dict` containing 6 keys associated with more nested `dict`s
 | `"epoch"`     | Epoch of RA/Dec                                                     | `str`   | `"J2000"`       |
 | `"dist"`      | Distance (pc)                                                       | `float` | `1780.`         |
 | `"v_lsr"`     | Systemic velocity with respect to the Local Standard of Rest (km/s) | `float` | `-4.2`          |
-| `"m_star"`    | Central protostellar mass (![equation](http://www.sciweavers.org/tex2img.php?eq=%7B%5Crm%20M%7D_%5Codot&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0))                         | `float` | `10.0`          |
+| `"m_star"`    | Central protostellar mass (solar masses).                           | `float` | `10.0`          |
 | `"r_1"`       | Inner disc radius from which jet material is sources (au)           | `float` | `1.0`           |
 | `"r_2"`       | Outer disc radius from which jet material is sources (au)           | `float` | `10.0`          |
 
@@ -110,9 +110,9 @@ Model grid dimensions
 
 | Parameter/key | Description                                                                               | Type          | Example |
 |---------------|-------------------------------------------------------------------------------------------|---------------|---------|
-| `"n_x"`       | Number of cells in $$x$$-axis                                                               | `int`         | 100     |
-| `"n_y"`       | Number of cells in $y$-axis                                                               | `int`         | 100     |
-| `"n_z"`       | Number of cells in $z$-axis                                                               | `int`         | 400     |
+| `"n_x"`       | Number of cells in x-axis                                                               | `int`         | 100     |
+| `"n_y"`       | Number of cells in y-axis                                                               | `int`         | 100     |
+| `"n_z"`       | Number of cells in z-axis                                                               | `int`         | 400     |
 | `"l_z"`       | Full length of z-axis/bi-polar jet (arcsec). Overrides `"n_x"`/`"n_y"`/`"n_z"` parameters | `float`, None | 2.0     |
 | `"c_size"`    | Grid cell size (au)                                                                       | `float`       | 2.0     |
 
@@ -123,7 +123,7 @@ Jet geometry parameters
 
 | Parameter/key | Description                                                        | Type    | Example  |
 |---------------|--------------------------------------------------------------------|---------|----------|
-| `"epsilon"`   | Power-law coefficient for jet width i.e. ![equation](http://www.sciweavers.org/tex2img.php?eq=w%20%5Cleft%28%20r%20%5Cright%29%20%5Cpropto%20r%5E%7B%5Cepsilon%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0) | `float` | `+1.0`   |
+| `"epsilon"`   | Power-law coefficient for jet width                                | `float` | `+1.0`   |
 | `"w_0"`       | Jet half-width at jet base (au)                                    | `float` | `2.0`    |
 | `"r_0"`       | Launching radius (au)                                              | `float` | `4.0`    |
 | `"inc"`       | Jet inclination (deg) [not implemented]                            | `float` | `90.`    |
@@ -134,9 +134,9 @@ Jet geometry parameters
 
 | Parameter/key | Description                                                                               | Type    | Example |
 |---------------|-------------------------------------------------------------------------------------------|---------|---------|
-| `"q_v"`       | Power-law coefficient for jet velocity i.e. ![equation](http://www.sciweavers.org/tex2img.php?eq=v%28r%29%20%5Cpropto%20r%5E%7B%5Crm%20q_v%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0)                   | `float` | `-0.5`  |
-| `"q_T"`       | Power-law coefficient for jet temperature i.e. ![equation](http://www.sciweavers.org/tex2img.php?eq=T%28r%29%20%5Cpropto%20r%5E%7B%5Crm%20q_T%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0)                | `float` | `-0.5`  |
-| `"q_x"`       | Power-law coefficient for jet ionisation fraction i.e. ![equation](http://www.sciweavers.org/tex2img.php?eq=%5Cchi_i%20%28r%29%20%5Cpropto%20r%5E%7B%5Crm%20q_%5Cchi%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0) | `float` | `0.0`   |
+| `"q_v"`       | Power-law coefficient for jet velocity                                                    | `float` | `-0.5`  |
+| `"q_T"`       | Power-law coefficient for jet temperature                                                 | `float` | `-0.5`  |
+| `"q_x"`       | Power-law coefficient for jet ionisation fraction                                         | `float` | `0.0`   |
 
 ##### `params['properties']`
 Jet physical parameter values
@@ -145,10 +145,10 @@ Jet physical parameter values
 |---------------|----------------------------------------------------------|---------|---------|
 | `"v_0"`       | Jet initial velocity (km/s)                 | `float` | `500.`  |
 | `"x_0"`       | Initial jet ionisation fraction (0 --> 1) | `float` | `0.1`   |
-| `"n_0"`       | Initial jet number density (![equation](http://www.sciweavers.org/tex2img.php?eq=%7B%5Crm%20cm%5E%7B-3%7D%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0))             | `float` | `1e9`   |
+| `"n_0"`       | Initial jet number density (per cubic cm)             | `float` | `1e9`   |
 | `"T_0"`       | Initial jet temperature (K)                              | `float` | `1e4`   |
-| `"mu"`        | Mean atomic weight of jet (![equation](http://www.sciweavers.org/tex2img.php?eq=%7B%5Crm%20m_%7BH%7D%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0))                | `float` | `1.3`   |
-| `"mlr"`       | Jet mass loss rate (![equation](http://www.sciweavers.org/tex2img.php?eq=%7B%5Crm%20M_%5Codot%20%5C%2C%20yr%5E%7B-1%7D%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0))          | `float`, None | `1e-5`  |
+| `"mu"`        | Mean atomic weight of jet (hydrogen atom mass)                | `float` | `1.3`   |
+| `"mlr"`       | Jet mass loss rate (solar masses per yr)          | `float`, None | `1e-5`  |
 
 **NB** - `"mlr"` overrides `"n_0"` if it is not `None` and calculates and updates `"n_0"` to give the required mass loss rate.
 
@@ -159,7 +159,7 @@ Jet mass loss variability parameters
 |---------------|--------------------------------------------------------------------|-----------------------------|--------------------------------|
 | `"t_0"`       | Burst peak times (yr)                                              | `numpy.array` (dtype=float) | `numpy.array([0., 1., 2.])`    |
 | `"hl"`        | Burst `half-lives`, i.e. FWHM in time (yr)                         | `numpy.array` (dtype=float) | `numpy.array([0.2, 0.1, 0.8])` |
-| `"chi"`       | Burst factors (multiple of jet's steady state ![equation](http://www.sciweavers.org/tex2img.php?eq=%5Cdot%7BM%7D_%7B%5Crm%20jet%7D&bc=Transparent&fc=Black&im=png&fs=12&ff=modern&edit=0)) | `numpy.array` (dtype=float) | `numpy.array([10., 5., 2.])`   |
+| `"chi"`       | Burst factors (multiple of jet's steady state mass loss rate       | `numpy.array` (dtype=float) | `numpy.array([10., 5., 2.])`   |
 
 Other lines of code at the bottom of `example-model-params.py` (below the comment `# DO NOT CHANGE BELOW!`) derive various required jet parameters. **Please do not change those lines!** As for the required model parameters
 
