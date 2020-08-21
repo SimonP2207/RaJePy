@@ -32,6 +32,7 @@ from RaJePy.maths import physics as mphys
 from RaJePy.plotting import functions as pfunc
 
 from warnings import filterwarnings
+
 filterwarnings("ignore", category=RuntimeWarning)
 
 
@@ -59,6 +60,7 @@ class JetModel:
 
         """
         # Get the model parameters from the saved model file
+        model_file = os.path.expanduser(model_file)
         loaded = pickle.load(open(model_file, 'rb'))
 
         # Create new JetModel class instance
@@ -175,6 +177,8 @@ class JetModel:
              ('q_x', format(p['power_laws']['q_x'], '+.3f')),
              ('q_n', format(p['power_laws']['q_n'], '+.3f')),
              ('q_tau', format(p['power_laws']['q_tau'], '+.3f')),
+             ('cell', format(p['grid']['c_size'], '.1f') + ' au'),
+             ('r_1', format(p['target']['r_1'], '+.1f') + ' au'),
              ('w_0', format(p['geometry']['w_0'], '.2f') + ' au'),
              ('r_0', format(p['geometry']['r_0'], '.2f') + ' au'),
              ('v_0', format(p['properties']['v_0'], '.0f') + ' km/s'),
@@ -183,16 +187,16 @@ class JetModel:
              ('T_0', format(p['properties']['T_0'], '.0e') + ' K'),
              ('i', format(p['geometry']['inc'], '+.1f') + ' deg'),
              ('theta', format(p['geometry']['pa'], '+.1f') + ' deg'),
+             ('D', format(p['target']['dist'], '+.0f') + ' pc'),
+             ('M*', format(p['target']['m_star'], '+.1f') + ' Msol'),
+             ('r_1', format(p['target']['r_1'], '+.1f') + ' au'),
+             ('r_2', format(p['target']['r_2'], '+.1f') + ' au'),
              ('cross-section',
-              'exp' if p['geometry']['exp_cs'] else 'constant'),
-             ('t_now', format(self.time / con.year, '+.3f') + ' yr')]
+              'exp' if p['geometry']['exp_cs'] else 'constant')]
 
-        for idx, t_0 in enumerate(p['ejection']['t_0']):
-            d.append(("t0_" + str(idx + 1), format(t_0, '+.3f') + ' yr'))
-            d.append(("hl_" + str(idx + 1),
-                      format(p['ejection']['hl'][idx], '.3f') + ' yr'))
-            d.append(("chi_" + str(idx + 1),
-                      format(p['ejection']['chi'][idx], '.3f')))
+        # Add current model time if relevant (i.e. bursts are included)
+        if len(p['ejection']['t_0']) > 0:
+            d.append(('t_now', format(self.time / con.year, '+.3f') + ' yr'))
 
         col1_width = max(map(len, [h[0]] + list(list(zip(*d))[0]))) + 2
         col2_width = max(map(len, [h[1]] + list(list(zip(*d))[1]))) + 2
@@ -201,7 +205,8 @@ class JetModel:
         hline = tab_width * '-'
         delim = '|'
 
-        s = format('JET MODEL', '^' + str(tab_width)) + '\n'
+        s = hline + '\n'
+        s += '/' + format('JET MODEL', '^' + str(tab_width - 2)) + '/\n'
         s += hline + '\n'
         s += delim + delim.join([format(h[0], '^' + str(col1_width)),
                                  format(h[1], '^' + str(col2_width))]) + delim
@@ -211,6 +216,47 @@ class JetModel:
                                      format(l[1], '^' + str(col2_width))]) + \
                  delim + '\n'
         s += hline + '\n'
+
+        # Burst information below
+        hb = ['t_0', 'FWHM', 'chi']
+        units = ['[yr]', '[yr]', '']
+        db = []
+        for idx, t in enumerate(p["ejection"]["t_0"]):
+            db.append((format(t, '.2f'),
+                       format(p["ejection"]["hl"][idx], '.2f'),
+                       format(p["ejection"]["chi"][idx], '.2f')))
+        s += '/' + format('BURSTS', '^' + str(tab_width - 2)) + '/\n'
+        s += hline + '\n'
+
+        if len(db) == 0:
+            s += delim + format(' None ',
+                                '-^' + str(tab_width - 2)) + delim + '\n'
+            s += hline + '\n'
+            return s
+
+        bcol1_w = bcol2_w = bcol3_w = (tab_width - 4) // 3
+
+        if (tab_width - 4) % 3 > 0:
+            bcol1_w += 1
+            if (tab_width - 4) % 3 == 2:
+                bcol2_w += 1
+
+        # Burst header and units
+        for l in (hb, units):
+            s += delim + delim.join([format(l[0], '^' + str(bcol1_w)),
+                                     format(l[1], '^' + str(bcol2_w)),
+                                     format(l[2], '^' + str(bcol3_w))]) + \
+                 delim + '\n'
+        s += hline + '\n'
+
+        # Burst(s) information
+        for l in db:
+            s += delim + delim.join([format(l[0], '^' + str(bcol1_w)),
+                                     format(l[1], '^' + str(bcol2_w)),
+                                     format(l[2], '^' + str(bcol3_w))]) + \
+                 delim + '\n'
+        s += hline + '\n'
+
         return s
 
     @property
@@ -265,6 +311,7 @@ class JetModel:
             mass loss rate incorporating input burst
 
             """
+
             def func2(t):
                 """Gaussian profiled ejection event"""
                 amp = peak_jml - self._ss_jml
@@ -305,6 +352,8 @@ class JetModel:
         Calculate the fraction of each of the grid's cells falling within the
         jet
         """
+        # TODO: Add in inclination angle (i) to all functions below
+        # TODO: Add in position angle (theta) to all functions below
         if self._ff is not None:
             return self._ff
 
@@ -900,7 +949,7 @@ class JetModel:
 
         return tau_ff
 
-    def intensity_ff(self, freq):
+    def intensity_ff(self, freq, savefits=False):
         """
         Radio intensity as viewed along x-axis (in W m^-2 Hz^-1 sr^-1)
         """
@@ -916,6 +965,9 @@ class JetModel:
               (1. - np.exp(-self.optical_depth_ff(freq)))
 
         ints = 2. * freq ** 2. * con.k * T_b / con.c ** 2.
+
+        if savefits:
+            self.save_fits(ints.T, savefits, 'intensity', freq)
 
         return ints
 
@@ -953,7 +1005,7 @@ class JetModel:
         None.
 
         """
-        if image_type not in ('flux', 'tau', 'em'):
+        if image_type not in ('flux', 'tau', 'em', 'intensity'):
             raise ValueError("arg image_type must be one of 'flux', 'tau' or "
                              "'em'")
 
@@ -990,7 +1042,7 @@ class JetModel:
         hdr['CDELT2'] = csize_deg
         hdr.comments['CDELT2'] = 'Pixel size in DEC (deg)'
 
-        if image_type in ('flux', 'tau'):
+        if image_type in ('flux', 'tau', 'intensity'):
             hdr['CDELT3'] = 1.
             hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
             hdr['CRPIX3'] = 0.5
@@ -999,10 +1051,12 @@ class JetModel:
             hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
 
         if image_type == 'flux':
-            hdr['BUNIT'] = 'Jy/pixel'
+            hdr['BUNIT'] = 'Jy pixel^-1'
+        elif image_type == 'intensity':
+            hdr['BUNIT'] = 'W m^-2 Hz^-1 sr^-1'
         elif image_type == 'em':
             hdr['BUNIT'] = 'pc cm^-6'
-        else:
+        elif image_type == 'tau':
             hdr['BUNIT'] = 'dimensionless'
 
         s_hist = self.__str__().split('\n')
@@ -1569,17 +1623,20 @@ class ModelRun:
         -------
         Instance of ModelRun initiated from save state.
         """
+        home = os.path.expanduser('~')
+        load_file = os.path.expanduser(load_file)
         loaded = pickle.load(open(load_file, 'rb'))
 
-        # for idx, run in enumerate(loaded['runs']):
-        #     for key in run:
-        #         if type(run[key]) is str:
-        #             if not os.path.exists(run['key']):
-        #                 run[key] = run[key].replace('/Users/simon', '~')
-        #         except AttributeError:
-        #             pass
-        #     loaded['runs'][idx] = run
+        for idx, run in enumerate(loaded['runs']):
+            for key in run:
+                if type(run[key]) is str:
+                    if not os.path.exists(run[key]):
+                        run[key] = run[key].replace('~', home)
+            loaded['runs'][idx] = run
 
+        loaded['model_file'] = loaded['model_file'].replace('~', home)
+        loaded['params']['dcys']['model_dcy'] = loaded['params']['dcys'] \
+            ['model_dcy'].replace('~', home)
         jm = JetModel.load_model(loaded["model_file"])
         params = loaded["params"]
 
@@ -1668,9 +1725,22 @@ class ModelRun:
         self._runs = runs
 
     def save(self, save_file):
-        p = {"runs": self.runs,
-             "params": self._params,
-             "model_file": self.model_file}
+        home = os.path.expanduser('~')
+        rs = self.runs
+        for idx, run in enumerate(rs):
+            for key in run:
+                if type(run[key]) is str:
+                    run[key] = run[key].replace(home, '~')
+            rs['runs'][idx] = run
+
+        ps = self._params
+        ps['dcys']['model_dcy'] = ps['dcys']['model_dcy'].replace(home, '~')
+        mf = self.model_file
+        mf = mf.replace(home, '~')
+
+        p = {"runs": rs,
+             "params": ps,
+             "model_file": mf}
         pickle.dump(p, open(save_file, 'wb'))
         return None
 
@@ -2038,12 +2108,12 @@ class ModelRun:
 
                 q_tau = self.model.params['power_laws']['q_tau']
                 eps = self.model.params['geometry']['epsilon']
-                jet_deconv_maj = 2. * r_0_as * (1. / tau_0)**(1. / q_tau)
+                jet_deconv_maj = 2. * r_0_as * (1. / tau_0) ** (1. / q_tau)
                 jet_deconv_min = 2. * w_0_as * (jet_deconv_maj / 2. /
-                                                r_0_as)**eps
+                                                r_0_as) ** eps
 
-                jet_conv_maj = np.sqrt(jet_deconv_maj**2. + beam_min**2.)
-                jet_conv_min = np.sqrt(jet_deconv_min**2. + beam_min**2.)
+                jet_conv_maj = np.sqrt(jet_deconv_maj ** 2. + beam_min ** 2.)
+                jet_conv_min = np.sqrt(jet_deconv_min ** 2. + beam_min ** 2.)
 
                 mask_str = 'box[[{}deg, {}deg], [{}deg, {}deg]]'.format(blc[0],
                                                                         blc[1],

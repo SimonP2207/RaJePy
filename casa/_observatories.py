@@ -16,8 +16,7 @@ import pandas as pd
 import RaJePy._config as config
 
 fname = 'Observatories_table.txt'
-fname = os.sep.join([os.path.expanduser('~'), 'Nextcloud', 'PythonLibraries',
-                     'VaJePy', 'files', 'antenna_configs', fname])
+fname = os.sep.join([config.dcys['files'], 'antenna_configs', fname])
 
 data = np.empty((0, 12))
 with open(fname, 'rt') as f:

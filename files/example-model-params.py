@@ -44,9 +44,9 @@ params = {
                    "mu": 1.3,  # Mean atomic weight (m_H)
                    "mlr": 1e-5,
                    },
-    "ejection": {"t_0": np.array([0.5]),  # Peak times of bursts (yr)
-                 "hl": np.array([0.2]),  # Half-lives of bursts (yr)
-                 "chi": np.array([5.0]),  # Burst factors of ejections
+    "ejection": {"t_0": np.array([0.5, 1.0, 4.3]),  # Peak times of bursts (yr)
+                 "hl": np.array([0.2, 0.3, 3.4]),  # Half-lives of bursts (yr)
+                 "chi": np.array([5.0, 11.4, 2.2]),  # Burst factors
                  }
              }
 

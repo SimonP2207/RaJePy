@@ -247,7 +247,7 @@ If `/example/dcy` was given for `params['dcys']['model_dcy']` in the pipeline pa
 /example/dcy/  # Set by user in pipeline parameter file's params['dcys']['model_dcy']
 ├──ModelRun_YYYY-MM-DD-HH:MM:SS.log  # Generated log file by JetModel
 ├──jetmodel.save  # Saved JetModel instance (large file size!)
-├──modelrun.save  # Save ModelRun instance
+├──modelrun.save  # Saved ModelRun instance
 ├──pointings.ptg  # Synthetic observation pointing file
 ├──Day0/  # First epoch directory for modelling/observations
 │  ├──ModelPlot.pdf  # Plot of resulting physical model
@@ -278,7 +278,7 @@ If `/example/dcy` was given for `params['dcys']['model_dcy']` in the pipeline pa
 │  ├──20000MHz/  # Directory containing data products for third radio frequency
 │  |  └──...
 │  └──50000MHz/  # Directory containing data products for fourth radio frequency
-│  |  └──...
+│     └──...
 ├──Day100/  # Second epoch directory for modelling/observations
 │  └──...
 └──...
