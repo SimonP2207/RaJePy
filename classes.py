@@ -117,7 +117,8 @@ class JetModel:
                                         self.params['grid']['c_size'],
                                         self.params['geometry']['r_0'] /
                                         self.params['grid']['c_size'],
-                                        self.params['geometry']['epsilon'])
+                                        self.params['geometry']['epsilon'],
+                                        self.params['geometry']['opang'])
                              )
                      )
             ny = int(np.ceil(mgeom.w_xz(0., nz + 1.,
@@ -125,7 +126,8 @@ class JetModel:
                                         self.params['grid']['c_size'],
                                         self.params['geometry']['r_0'] /
                                         self.params['grid']['c_size'],
-                                        self.params['geometry']['epsilon'])
+                                        self.params['geometry']['epsilon'],
+                                        self.params['geometry']['opang'])
                              )
                      )
             nx *= 2
@@ -172,6 +174,7 @@ class JetModel:
         p = self.params
         h = ['Parameter', 'Value']
         d = [('epsilon', format(p['geometry']['epsilon'], '+.3f')),
+             ('opang', format(p['geometry']['opang'], '+.0f') + ' deg'),
              ('q_v', format(p['power_laws']['q_v'], '+.3f')),
              ('q_T', format(p['power_laws']['q_T'], '+.3f')),
              ('q_x', format(p['power_laws']['q_x'], '+.3f')),
@@ -377,6 +380,7 @@ class JetModel:
         w_0 = self.params['geometry']['w_0']
         r_0 = self.params['geometry']['r_0']
         eps = self.params['geometry']['epsilon']
+        oa = self.params['geometry']['opang']
         cs = self.csize
 
         w_0_cs = w_0 / cs
@@ -391,27 +395,30 @@ class JetModel:
 
             return func
 
-        def gfun_area(w_0, n_y, n_z, r_0, eps):
+        def gfun_area(w_0, n_y, n_z, r_0, eps, opang):
             """
             The lower boundary curve in z for area calculation
             """
 
             def func(x):
+                # return np.max([r_0, n_z,
+                #                r_0 * w_0 ** (-1. / eps) *
+                #                (x ** 2. + n_y ** 2.) ** (1. / (2. * eps))])
                 return np.max([r_0, n_z,
-                               r_0 * w_0 ** (-1. / eps) *
-                               (x ** 2. + n_y ** 2.) ** (1. / (2. * eps))])
-
+                               mgeom.w_xy(x, n_y, w_0, r_0, eps, opang)])
             return func
 
-        def hfun(w_0, n_y, n_z, r_0, eps):
+        def hfun(w_0, n_y, n_z, r_0, eps, opang):
             """
             The upper boundary curve in y for volume calculation
             """
 
             def func(x):
-                return np.min([np.sqrt(w_0 ** 2. *
-                                       ((n_z + 1.) / r_0) ** (
-                                               2 * eps) - x ** 2.),
+                # return np.min([np.sqrt(w_0 ** 2. *
+                #                        ((n_z + 1.) / r_0) ** (
+                #                                2 * eps) - x ** 2.),
+                #                n_y + 1])
+                return np.min([mgeom.w_xz(x, n_z, w_0, r_0, eps, opang),
                                n_y + 1])
 
             return func
@@ -434,17 +441,22 @@ class JetModel:
 
             return func
 
-        def qfun(w_0, n_z, r_0, eps):
+        def qfun(w_0, n_z, r_0, eps, opang):
             """
             The lower boundary surface in z for volume calculation
             """
 
             def func(x, y):
-                return np.max([r_0 * w_0 ** (-1. / eps) *
-                               (x ** 2. + y ** 2.) ** (1. / (2. * eps)),
+                # return np.max([r_0 * w_0 ** (-1. / eps) *
+                #                (x ** 2. + y ** 2.) ** (1. / (2. * eps)),
+                #                r_0, n_z])
+                return np.max([mgeom.w_xy(x, y, w_0, r_0, eps, opang),
                                r_0, n_z])
 
             return func
+
+
+
 
         ffs = np.zeros(np.shape(xx))
         areas = np.zeros(np.shape(xx))  # Areas as projected on to the y-axis
@@ -464,7 +476,7 @@ class JetModel:
                              (x + cs, y + cs, z + cs))
                     verts_inside = []
                     for vert in verts:
-                        zjet = mgeom.w_xy(vert[0], vert[1], w_0, r_0, eps)
+                        zjet = mgeom.w_xy(vert[0], vert[1], w_0, r_0, eps, oa)
                         if vert[2] > zjet:
                             verts_inside.append(True)
                         else:
@@ -479,56 +491,56 @@ class JetModel:
                         # Calculate tuple of possible intercept coordinates for
                         # every edge of the voxel
                         i = ((mgeom.w_yz(verts[0][1], verts[0][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[0][1],
                               verts[0][2]),  # a
                              (verts[0][0],
                               mgeom.w_xz(verts[0][0], verts[0][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[0][2]),  # b
                              (verts[0][0],
                               verts[0][1],
                               mgeom.w_xy(verts[0][0], verts[0][1],
-                                         w_0, r_0, eps)),  # c
+                                         w_0, r_0, eps, oa)),  # c
                              (verts[1][0],
                               mgeom.w_xz(verts[1][0], verts[1][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[1][2]),  # d
                              (verts[1][0],
                               verts[1][1],
                               mgeom.w_xy(verts[1][0], verts[1][1],
-                                         w_0, r_0, eps)),  # e
+                                         w_0, r_0, eps, oa)),  # e
                              (mgeom.w_yz(verts[2][1], verts[2][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[2][1],
                               verts[2][2]),  # f
                              (verts[2][0],
                               verts[2][1],
                               mgeom.w_xy(verts[2][0], verts[2][1],
-                                         w_0, r_0, eps)),  # g
+                                         w_0, r_0, eps, oa)),  # g
                              (verts[3][0],
                               verts[3][1],
                               mgeom.w_xy(verts[3][0], verts[3][1],
-                                         w_0, r_0, eps)),  # h
+                                         w_0, r_0, eps, oa)),  # h
                              (mgeom.w_yz(verts[4][1], verts[4][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[4][1],
                               verts[4][2]),  # i
                              (verts[4][0],
                               mgeom.w_xz(verts[4][0], verts[4][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[4][2]),  # j
                              (verts[5][0],
                               mgeom.w_xz(verts[5][0], verts[5][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[5][2]),  # k
                              (mgeom.w_yz(verts[6][1], verts[6][2],
-                                         w_0, r_0, eps),
+                                         w_0, r_0, eps, oa),
                               verts[6][1],
                               verts[6][2]))  # l
 
-                        # Determine which edges actually have an intercept with jet
-                        # boundary
+                        # Determine which edges actually have an intercept with
+                        # jet-boundary
                         # NB - ^ is the bitwise operator XOR
                         mask = [verts_inside[0] ^ verts_inside[1],
                                 verts_inside[0] ^ verts_inside[2],
@@ -560,26 +572,23 @@ class JetModel:
                             x /= cs
                             y /= cs
                             z /= cs
-                            b = np.min([np.sqrt(w_0_cs ** 2. *
-                                                ((z + 1.) / r_0_cs) **
-                                                (2. * eps) - y ** 2.),
+                            b = np.min([mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps,
+                                                   oa),
                                         x + 1.])
                             ff = tplquad(lambda z, y, x: 1.,
                                          a=x, b=b,
                                          gfun=gfun(y),
-                                         hfun=hfun(w_0_cs, y,
-                                                   z, r_0_cs, eps),
-                                         qfun=qfun(w_0_cs, z,
-                                                   r_0_cs, eps),
+                                         hfun=hfun(w_0_cs, y, z, r_0_cs,
+                                                   eps, oa),
+                                         qfun=qfun(w_0_cs, z, r_0_cs, eps, oa),
                                          rfun=rfun(z))[0]
 
-                            b_a = np.sqrt(w_0_cs ** 2. *
-                                          ((z + 1.) /
-                                           r_0_cs) ** (2. * eps) - y ** 2.)
+                            b_a = mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps, oa)
+
                             area = dblquad(lambda z, x: 1.,
                                            a=x, b=np.min([b_a, x + 1.]),
                                            gfun=gfun_area(w_0_cs, y, z, r_0_cs,
-                                                          eps),
+                                                          eps, oa),
                                            hfun=hfun_area(z))[0]
                             x *= cs
                             y *= cs
@@ -587,32 +596,30 @@ class JetModel:
 
                         # Accurately calculate filling fractions for 5 base
                         # cell layers
-                        if ((np.round(z / cs) - np.round(r_0_cs) < 5) and
+                        if ((np.round(z / cs) - np.round(r_0_cs) < 0) and
                                 (np.round(z / cs) - np.round(r_0_cs) > -1)):
                             x /= cs
                             y /= cs
                             z /= cs
 
                             # Volume
-                            b = np.min([np.sqrt(w_0_cs ** 2. *
-                                                ((z + 1.) / r_0_cs) **
-                                                (2. * eps) - y ** 2.),
+                            b = np.min([mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps,
+                                                   oa),
                                         x + 1.])
                             ff = tplquad(lambda z, y, x: 1.,
                                          a=x, b=b,
                                          gfun=gfun(y),
-                                         hfun=hfun(w_0_cs, y, z, r_0_cs, eps),
-                                         qfun=qfun(w_0_cs, z, r_0_cs, eps),
+                                         hfun=hfun(w_0_cs, y, z, r_0_cs, eps,
+                                                   oa),
+                                         qfun=qfun(w_0_cs, z, r_0_cs, eps, oa),
                                          rfun=rfun(z))[0]
 
-                            b_a = np.sqrt(w_0_cs ** 2. *
-                                          ((z + 1.) / r_0_cs) **
-                                          (2. * eps) - y ** 2.)
+                            b_a = mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps, oa)
 
                             area = dblquad(lambda z, x: 1.,
                                            a=x, b=np.min([b_a, x + 1.]),
                                            gfun=gfun_area(w_0_cs, y, z, r_0_cs,
-                                                          eps),
+                                                          eps, oa),
                                            hfun=hfun_area(z))[0]
                     ffs[idxy][idxx][idxz] = ff
                     areas[idxy][idxx][idxz] = area
@@ -800,7 +807,43 @@ class JetModel:
         if hasattr(self, '_nd'):
             return self._nd * self.chi_xyz
 
+        def m_slice(a, b):
+            """Mass of slice over the interval from a --> b in z, in kg"""
+            n_0 = self.params["properties"]["n_0"] * 1e6
+            mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
+            r_0 = self.params["geometry"]["r_0"] * con.au
+            q_n = self.params["power_laws"]["q_n"]
+            w_0 = self.params["geometry"]["w_0"] * con.au
+            eps = self.params["geometry"]["epsilon"]
+            mu = self.params['properties']['mu'] * mphys.atomic_mass("H")
+
+            def indef_integral(z):
+                c = 1 + q_n + 2. * eps
+                num_p1 = mu * np.pi * mod_r_0 * n_0 * w_0 ** 2.
+                num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
+
+                return num_p1 * num_p2 / c
+
+            return indef_integral(b) - indef_integral(a)
+
+        def v_slice(a, b):
+            """Volume of slice over the interval from a --> b in z, in m^3"""
+            mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
+            r_0 = self.params["geometry"]["r_0"] * con.au
+            w_0 = self.params["geometry"]["w_0"] * con.au
+            eps = self.params["geometry"]["epsilon"]
+
+            def indef_integral(z):
+                c = 1 + 2. * eps
+                num_p1 = np.pi * mod_r_0 * w_0 ** 2.
+                num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
+
+                return num_p1 * num_p2 / c
+
+            return indef_integral(b) - indef_integral(a)
+
         z = np.abs(self.grid[2] + 0.5 * self.csize)
+
         a = z - 0.5 * self.csize
         b = z + 0.5 * self.csize
 
@@ -810,18 +853,48 @@ class JetModel:
         a = np.where(a <= self.params['geometry']['r_0'],
                      self.params['geometry']['r_0'], a)
 
+        # ms = m_slice(a * con.au, b * con.au)
+        # vs = (self.fill_factor * (self.csize * con.au)**3.) / \
+        #      v_slice(a * con.au, b * con.au)
+        # mcells = ms * vs
+        # md = mcells / (self.fill_factor * (self.csize * con.au)**3.)
+        # nd = md / (self.params['properties']['mu'] * mphys.atomic_mass("H"))
+        #
+        # nd = np.where(self.fill_factor > 0, nd, np.NaN) * self.fill_factor
+        #
+        # # nd = self.mass / (self.fill_factor * (jm.csize * con.au)**3.)
+        # # nd /=  self.params['properties']['mu'] * mphys.atomic_mass("H")
+        # # nd /= 1e6  # m^-3 to cm^-3
+        #
+        # self.number_density = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN,
+        #                                     neginf=np.NaN) * 1e-6
+        #
+        # return self._nd * self.chi_xyz
+
+        def indef_integral(z):
+            num_p1 = self.params['properties']['n_0'] * \
+                     self.params["geometry"]["mod_r_0"]
+            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
+                       self.params["geometry"]["r_0"]) /
+                      (self.params["geometry"]["mod_r_0"]))
+            num_p2 = num_p2 ** (self.params["power_laws"]["q_n"] + 1.)
+            den = self.params["power_laws"]["q_n"] + 1.
+            return num_p1 * num_p2 / den
+
         # Method 1, i.e. via Reynolds (1986) power-law for n(r) and
         # averaging cell number density over z-axis extent of each cell. See
         # https://www.math24.net/average-value-function/ for math
-        nd = self.params['properties']['n_0']
-        nd *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-            "q_n"]
-        nd *= (b ** (self.params["power_laws"]["q_n"] + 1) -
-               a ** (self.params["power_laws"]["q_n"] + 1))
-        nd /= self.params["power_laws"]["q_n"] + 1
+        # nd = self.params['properties']['n_0']
+        # nd *= self.params['geometry']['mod_r_0'] **\
+        #       -self.params["power_laws"]["q_n"]
+        # nd *= (b ** (self.params["power_laws"]["q_n"] + 1) -
+        #        a ** (self.params["power_laws"]["q_n"] + 1))
+        # nd /= self.params["power_laws"]["q_n"] + 1
+        # nd /= self.csize
+        nd = indef_integral(b) - indef_integral(a)
         nd /= self.csize
 
-        nd = np.where(self.fill_factor > 0, nd, np.NaN)
+        nd = np.where(self.fill_factor > 0, nd, np.NaN) * self.fill_factor
 
         # nd = self.mass / (self.fill_factor * (jm.csize * con.au)**3.)
         # nd /=  self.params['properties']['mu'] * mphys.atomic_mass("H")
@@ -859,16 +932,27 @@ class JetModel:
         a = np.where(a <= self.params['geometry']['r_0'],
                      self.params['geometry']['r_0'], a)
 
+        def indef_integral(z):
+            num_p1 = self.params['properties']['x_0'] * \
+                     self.params["geometry"]["mod_r_0"]
+            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
+                       self.params["geometry"]["r_0"]) /
+                      (self.params["geometry"]["mod_r_0"]))
+            num_p2 = num_p2 ** (self.params["power_laws"]["q_x"] + 1.)
+            den = self.params["power_laws"]["q_x"] + 1.
+            return num_p1 * num_p2 / den
+
         # Averaging cell ionisation fraction over z-axis extent of each cell.
         # See https://www.math24.net/average-value-function/ for math
-        xi = self.params['properties']['x_0']
-        xi *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-            "q_x"]
-        xi *= (b ** (self.params["power_laws"]["q_x"] + 1) -
-               a ** (self.params["power_laws"]["q_x"] + 1))
-        xi /= self.params["power_laws"]["q_x"] + 1
+        # xi = self.params['properties']['x_0']
+        # xi *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
+        #     "q_x"]
+        # xi *= (b ** (self.params["power_laws"]["q_x"] + 1) -
+        #        a ** (self.params["power_laws"]["q_x"] + 1))
+        # xi /= self.params["power_laws"]["q_x"] + 1
+        # xi /= self.csize
+        xi = indef_integral(b) - indef_integral(a)
         xi /= self.csize
-
         xi = np.where(self.fill_factor > 0., xi, np.NaN)
 
         self.ion_fraction = xi
@@ -1083,17 +1167,32 @@ class JetModel:
         a = np.where(a <= self.params['geometry']['r_0'],
                      self.params['geometry']['r_0'], a)
 
+        def indef_integral(z):
+            num_p1 = self.params['properties']['T_0'] * \
+                     self.params["geometry"]["mod_r_0"]
+            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
+                       self.params["geometry"]["r_0"]) /
+                      (self.params["geometry"]["mod_r_0"]))
+            num_p2 = num_p2 ** (self.params["power_laws"]["q_T"] + 1.)
+            den = self.params["power_laws"]["q_T"] + 1.
+            return num_p1 * num_p2 / den
+
+        # xi /= self.csize
+        ts = indef_integral(b) - indef_integral(a)
+        ts /= self.csize
+        ts = np.where(self.fill_factor > 0., ts, np.NaN)
+
         # Averaging cell temperature over z-axis extent of each cell. See
         # https://www.math24.net/average-value-function/ for math
-        ts = self.params['properties']['T_0']
-        ts *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-            "q_T"]
-        ts *= (b ** (self.params["power_laws"]["q_T"] + 1) -
-               a ** (self.params["power_laws"]["q_T"] + 1))
-        ts /= self.params["power_laws"]["q_T"] + 1
-        ts /= self.csize
-
-        ts = np.where(self.fill_factor > 0., ts, np.NaN)
+        # ts = self.params['properties']['T_0']
+        # ts *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
+        #     "q_T"]
+        # ts *= (b ** (self.params["power_laws"]["q_T"] + 1) -
+        #        a ** (self.params["power_laws"]["q_T"] + 1))
+        # ts /= self.params["power_laws"]["q_T"] + 1
+        # ts /= self.csize
+        #
+        # ts = np.where(self.fill_factor > 0., ts, np.NaN)
         self.temperature = ts
 
         return self._t
@@ -1136,15 +1235,30 @@ class JetModel:
 
         a = np.where(a <= r_0, r_0, a)
 
+        def indef_integral(z):
+            num_p1 = self.params['properties']['v_0'] * \
+                     self.params["geometry"]["mod_r_0"]
+            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
+                       self.params["geometry"]["r_0"]) /
+                      (self.params["geometry"]["mod_r_0"]))
+            num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
+            den = self.params["power_laws"]["q_v"] + 1.
+            return num_p1 * num_p2 / den
+
+        # xi /= self.csize
+        vz = indef_integral(b) - indef_integral(a)
+        vz /= self.csize
+        vz = np.where(self.fill_factor > 0., vz, np.NaN)
+
         # Averaging cell z-velocity over z-axis extent of each cell. See
         # https://www.math24.net/average-value-function/ for math
-        vz = self.params['properties']['v_0']
-        vz *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-            "q_v"]
-        vz *= (b ** (self.params["power_laws"]["q_v"] + 1) -
-               a ** (self.params["power_laws"]["q_v"] + 1))
-        vz /= self.params["power_laws"]["q_v"] + 1
-        vz /= self.csize
+        # vz = self.params['properties']['v_0']
+        # vz *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
+        #     "q_v"]
+        # vz *= (b ** (self.params["power_laws"]["q_v"] + 1) -
+        #        a ** (self.params["power_laws"]["q_v"] + 1))
+        # vz /= self.params["power_laws"]["q_v"] + 1
+        # vz /= self.csize
 
         # Effective radius of (x, y) point in jet stream i.e. from what radius
         # in the disc the material was launched
@@ -2194,7 +2308,11 @@ class ModelRun:
         freqs, fluxes = [], []
         for idx, run in enumerate(self.runs):
             if run['time'] == plot_time:
-                fluxes.append(np.nansum(fits.open(run['fits_flux'])[0].data[0]))
+                if run['completed']:
+                    flux_data = fits.open(run['fits_flux'])[0].data[0]
+                else:
+                    flux_data = self.model.flux_ff(run['freq'])
+                fluxes.append(np.nansum(flux_data))
                 freqs.append(run['freq'])
 
         freqs = np.array(freqs)
@@ -2218,17 +2336,25 @@ class ModelRun:
         freqs_r86 = np.logspace(np.log10(np.min(freqs)),
                                 np.log10(np.max(freqs)), 100)
         flux_exp = []
+
+        ymax = self.model.params['geometry']['mod_r_0'] -\
+               self.model.params['geometry']['r_0']
+        ymax /= self.model.params['target']['dist']
+        ymax += self.model.params['grid']['l_z'] * 0.5
+
+        ymin = self.model.params['geometry']['mod_r_0'] /\
+               self.model.params['target']['dist']
+
         for freq in freqs_r86:
             if self.model.params['grid']['l_z'] is not None:
-                f = mphys.flux_expected_r86(self.model, freq,
-                                            self.model.params['grid']['l_z'] /
-                                            2)
+                f = mphys.flux_expected_r86(self.model, freq, ymax, ymin)
             else:
                 scale = np.arctan(self.model.params['grid']['n_z'] *
                                   self.model.params['grid']['c_size'] * 0.5 /
                                   (self.model.params['target']['dist'] *
                                    con.parsec / con.au)) / con.arcsec
-                f = mphys.flux_expected_r86(self.model, freq, scale)
+                f = mphys.flux_expected_r86(self.model, freq, ymax + scale,
+                                            ymin)
             flux_exp.append(f * 2.)  # for biconical jet
 
         alphas_r86 = []
@@ -2505,6 +2631,119 @@ if __name__ == '__main__':
 
     jm = JetModel(rjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
     pline = ModelRun(jm, rjp.cfg.dcys['files'] + os.sep +
-                     'example-pipeline-params.py')
+                    'example-pipeline-params.py')
 
-    pline.execute(simobserve=True, dryrun=False)
+    pline.plot_fluxes(0)
+
+    # def n_z(jm, z):
+    #     n_0 = jm.params["properties"]["n_0"]
+    #     mod_r_0 = jm.params["geometry"]["mod_r_0"]
+    #     r_0 = jm.params["geometry"]["r_0"]
+    #     q_n = jm.params["power_laws"]["q_n"]
+    #
+    #     ns = n_0 * ((z + mod_r_0 - r_0) / mod_r_0) ** q_n
+    #     ns = n_0 * (z / r_0) ** q_n
+    #
+    #     return np.where(z < r_0, np.NaN, ns)
+    #
+    # def w_z(jm, z):
+    #     w_0 = jm.params["geometry"]["w_0"]
+    #     mod_r_0 = jm.params["geometry"]["mod_r_0"]
+    #     r_0 = jm.params["geometry"]["r_0"]
+    #     eps = jm.params["geometry"]["epsilon"]
+    #
+    #     ws = w_0 * ((z + mod_r_0 - r_0) / mod_r_0) ** eps
+    #     ws = w_0 * (z / mod_r_0) ** eps
+    #
+    #     return np.where(z < r_0, np.NaN, ws)
+    #
+    # def m_z(jm, z):
+    #     n_0 = jm.params["properties"]["n_0"]
+    #     mod_r_0 = jm.params["geometry"]["mod_r_0"]
+    #     r_0 = jm.params["geometry"]["r_0"]
+    #     q_n = jm.params["power_laws"]["q_n"]
+    #     w_0 = jm.params["geometry"]["w_0"]
+    #     eps = jm.params["geometry"]["epsilon"]
+    #
+    #     ms = np.pi * n_0 * w_0**2. * ((z + mod_r_0 - r_0) /
+    #                                   mod_r_0) ** (q_n + 2. * eps)
+    #
+    #     return ms
+    #
+    # def log_w_z(jm, z, translate=0.):
+    #     w_0 = jm.params["geometry"]["w_0"]
+    #     mod_r_0 = jm.params["geometry"]["mod_r_0"]
+    #     r_0 = jm.params["geometry"]["r_0"]
+    #     eps = jm.params["geometry"]["epsilon"]
+    #
+    #     log_ws = np.log10(w_0) + eps * np.log10(z) - eps * np.log10(mod_r_0)
+    #
+    #     if translate != 0:
+    #         log_ws -= eps * np.log10(translate)
+    #
+    #     return np.where(z < r_0, np.NaN, log_ws)
+    #
+    # def m_slice(jm, a, b):
+    #     n_0 = jm.params["properties"]["n_0"] * 1e6
+    #     mod_r_0 = jm.params["geometry"]["mod_r_0"] * con.au
+    #     r_0 = jm.params["geometry"]["r_0"] * con.au
+    #     q_n = jm.params["power_laws"]["q_n"]
+    #     w_0 = jm.params["geometry"]["w_0"] * con.au
+    #     eps = jm.params["geometry"]["epsilon"]
+    #     mu = jm.params['properties']['mu'] * mphys.atomic_mass("H")
+    #
+    #     def indef_integral(z):
+    #         c = 1 + q_n + 2. * eps
+    #         num_p1 = mu * np.pi * mod_r_0 * n_0 * w_0 ** 2.
+    #         num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
+    #
+    #         return num_p1 * num_p2 / c
+    #
+    #     return indef_integral(b) - indef_integral(a)
+    #
+    # def v_slice(jm, a, b):
+    #     mod_r_0 = jm.params["geometry"]["mod_r_0"] * con.au
+    #     r_0 = jm.params["geometry"]["r_0"] * con.au
+    #     w_0 = jm.params["geometry"]["w_0"] * con.au
+    #     eps = jm.params["geometry"]["epsilon"]
+    #
+    #     def indef_integral(z):
+    #         c = 1 + 2. * eps
+    #         num_p1 =  np.pi * mod_r_0 * w_0 ** 2.
+    #         num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
+    #
+    #         return num_p1 * num_p2 / c
+    #
+    #     return indef_integral(b) - indef_integral(a)
+    #
+    # step = jm.params['properties']['v_0'] * 1e3 * con.year / con.au
+    # step = jm.params["grid"]["c_size"]
+    # zs = jm.grid[2][0][0]
+    # ms = m_slice(jm, np.abs(zs) * con.au, (np.abs(zs) + step) * con.au)
+    # ms_sum = jm.number_density * 1e0  * jm.params['properties']['mu'] * \
+    #          mphys.atomic_mass("H")
+    # ms_sum *= (jm.csize * con.au)**3.
+    # ms_sum = np.nansum(np.nansum(ms_sum, axis=1), axis=0)
+    # vs_sum = np.nansum(np.nansum(jm.fill_factor, axis=1), axis=0) * \
+    #          (jm.csize * con.au) ** 3.
+    # vs = v_slice(jm, np.abs(zs) * con.au, (np.abs(zs) + step) * con.au)
+    #
+    #
+    # plt.close('all')
+    #
+    # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6., 3.))
+    # # plt.plot(log_w_z(jm, zs), np.log10(zs), ls='-', color='cornflowerblue')
+    # # plt.plot(log_w_z(jm, zs, 10.), np.log10(zs), ls='--', color='red')
+    #
+    # ax1.plot(ms, zs,'r-')
+    # ax1.plot(ms_sum, zs, 'g-')
+    # # ax1.set_xscale('log')
+    # ax1.set_yscale('log')
+    #
+    # ax2.plot(vs, zs,'r-')
+    # ax2.plot(vs_sum, zs, 'g-')
+    #
+    #
+    # #plt.xlim(1.5e25, 2.5e25)
+    #
+    # plt.show()
