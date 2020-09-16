@@ -2323,14 +2323,14 @@ class ModelRun:
             alphas.append(np.log10(fluxes[n] /
                                    fluxes[n - 1]) /
                           np.log10(freqs[n] / freqs[n - 1]))
-        alphas = np.append(alphas[0], alphas)
 
         plt.close('all')
 
         fig, ax1 = plt.subplots(1, 1, figsize=(6., 6.))
         ax2 = ax1.twinx()
 
-        ax2.plot(freqs, alphas, color='b', ls='None', mec='b', marker='o',
+        ax2.plot([(f + freqs[i + 1]) for i, f in enumerate(freqs[:-1])],
+                 alphas, color='b', ls='None', mec='b', marker='o',
                  mfc='cornflowerblue', lw=2, zorder=2)
 
         freqs_r86 = np.logspace(np.log10(np.min(freqs)),
@@ -2361,9 +2361,9 @@ class ModelRun:
         for n in np.arange(1, len(freqs_r86)):
             alphas_r86.append(np.log10(flux_exp[n] / flux_exp[n - 1]) /
                               np.log10(freqs_r86[n] / freqs_r86[n - 1]))
-        alphas_r86 = np.append(alphas_r86[0], alphas_r86)
 
-        ax2.plot(freqs_r86, alphas_r86, color='cornflowerblue', ls='--', lw=2,
+        ax2.plot([(f + freqs_r86[i + 1]) for i, f in enumerate(freqs_r86[:-1])],
+                 alphas_r86, color='cornflowerblue', ls='--', lw=2,
                  zorder=1)
 
         ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
@@ -2389,8 +2389,10 @@ class ModelRun:
             ["Jet", "lz" + str(self.model.params["grid"]["l_z"]),
              "csize" + str(self.model.params["grid"]["c_size"])])
         save_file += '.png'
+        save_file = os.sep.join([self.dcy, save_file])
 
-        fig.savefig('/Users/simon/Desktop/' + save_file, bbox_inches='tight')
+        print("Saving Radio SED figure to {}".format(save_file))
+        fig.savefig(save_file, bbox_inches='tight')
 
         return None
 
