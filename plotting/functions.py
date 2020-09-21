@@ -4,11 +4,18 @@ from matplotlib.colors import LogNorm, SymLogNorm
 from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 
-def equalise_axes(ax):
+def equalise_axes(ax, fix_x=False, fix_y=False, fix_z=False):
     """
     Equalises the x/y/z axes of a matplotlib.axes._subplots.AxesSubplot
     instance. Autodetects if 2-D, 3-D, linear-scaling or logarithmic-scaling.
+    fix_x/fix_y/fix_z is to fix the x, y or z scales of the plot and work
+    the other axes limits around it, potentially chopping off data points. Only
+    one of fix_x/fix_y/fix_z can be true
     """
+    if sum((fix_x, fix_y, fix_z)) not in (0, 1):
+        raise ValueError("Only 1 of fix_x, fix_y or fix_z can be set to True "
+                         "as a maximum")
+
     if ax.get_xscale() == 'log':
         logx = True
     else:
@@ -43,26 +50,41 @@ def equalise_axes(ax):
     else:
         r = np.max([x_range, y_range])
 
+    if fix_x:
+        r = x_range
+    elif fix_y:
+        r = y_range
+    elif ndims == 3 and fix_z:
+        r = z_range
+
     if logx:
-        ax.set_xlim(10**(np.mean(np.log10(ax.get_xlim())) - r / 2.),
-                    10**(np.mean(np.log10(ax.get_xlim())) + r / 2.))
+        xlims = (10 ** (np.mean(np.log10(ax.get_xlim())) - r / 2.),
+                 10 ** (np.mean(np.log10(ax.get_xlim())) + r / 2.))
     else:
-        ax.set_xlim(np.mean(ax.get_xlim()) - r / 2.,
-                    np.mean(ax.get_xlim()) + r / 2.)
+        xlims = (np.mean(ax.get_xlim()) - r / 2.,
+                 np.mean(ax.get_xlim()) + r / 2.)
+    ax.set_xlim(xlims)
+
     if logy:
-        ax.set_ylim(10**(np.mean(np.log10(ax.get_ylim())) - r / 2.),
-                    10**(np.mean(np.log10(ax.get_ylim())) + r / 2.))
+        ylims = (10**(np.mean(np.log10(ax.get_ylim())) - r / 2.),
+                 10**(np.mean(np.log10(ax.get_ylim())) + r / 2.))
     else:
-        ax.set_ylim(np.mean(ax.get_ylim()) - r / 2.,
-                    np.mean(ax.get_ylim()) + r / 2.)
+        ylims = (np.mean(ax.get_ylim()) - r / 2.,
+                 np.mean(ax.get_ylim()) + r / 2.)
+    ax.set_ylim(ylims)
+
     if ndims == 3:
         if logz:
-            ax.set_zlim(10**(np.mean(np.log10(ax.get_zlim())) - r / 2.),
-                        10**(np.mean(np.log10(ax.get_zlim())) + r / 2.))
+            zlims = (10**(np.mean(np.log10(ax.get_zlim())) - r / 2.),
+                     10**(np.mean(np.log10(ax.get_zlim())) + r / 2.))
         else:
-            ax.set_zlim(np.mean(ax.get_zlim()) - r / 2.,
-                        np.mean(ax.get_zlim()) + r / 2.)
-    return None
+            zlims = (np.mean(ax.get_zlim()) - r / 2.,
+                     np.mean(ax.get_zlim()) + r / 2.)
+        ax.set_zlim(zlims)
+
+        return xlims, ylims, zlims
+
+    return xlims, ylims
 
 def make_colorbar(cax, cmax, cmin=0, position='right', orientation='vertical',
                   numlevels=50, colmap='viridis', norm=None,

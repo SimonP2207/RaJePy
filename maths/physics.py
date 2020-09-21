@@ -104,7 +104,7 @@ def approx_flux_expected_r86(jm, freq):
          jm.params['power_laws']['q_T']) / jm.params['power_laws']['q_tau']
     flux = 2**(1. - c) * (jm.params['target']['dist'] * con.parsec * 1e2)**-2.
     flux *= a_j * a_k**(-1. - c) * jm.params['properties']['T_0']**(1. + 1.35 * c)
-    flux *= jm.params['geometry']['r_0'] * con.au * 1e2
+    flux *= jm.params['geometry']['mod_r_0'] * con.au * 1e2
     flux *= (jm.params['geometry']['w_0'] * con.au * 1e2)**(1. - c)
     flux *= (jm.params['properties']['n_0'] *
              jm.params['properties']['x_0'])**(-(2. * c))
@@ -120,7 +120,8 @@ def approx_flux_expected_r86(jm, freq):
     flux *= 1e-7 * 1e2**2.  # now in W m^-2 Hz^-1
     return flux / 1e-26  # now in Jy
 
-def flux_expected_r86(jm, freq, y_max):
+
+def flux_expected_r86(jm, freq, y_max, y_min=None):
     """
     Exact flux expected from Equation 8 of Reynolds (1986) analytical model
     paper, for monopolar jet.
@@ -133,52 +134,66 @@ def flux_expected_r86(jm, freq, y_max):
         Frequency of observation (Hz)
     y_max : float
         Jet's angular extent to integrate flux over (arcsecs).
-
+    y_min : float
+        Minimum value from jet base to integrate from (arcsecs)
     Returns
     -------
     float
         Exact flux expected from Reynolds (1986)'s analytical model (Jy).
 
     """
+    # Parse constants into local variables
     a_j, a_k = 6.5E-38, 0.212  # given as constants of cgs equations
-    d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
-    y_max = np.tan(y_max * con.arcsec) * d  # in cm
     inc = jm.params['geometry']['inc']  # degrees
-    r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
-    y_0 = r_0 * np.sin(np.radians(inc))  # cm
     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
-    d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
     T_0 = jm.params['properties']['T_0']  # K
     n_0 = jm.params['properties']['n_0']  # cm^-3
-    chi_0 = jm.params['properties']['x_0']  # dimensionless
+    x_0 = jm.params['properties']['x_0']  # dimensionless
     q_tau = jm.params["power_laws"]["q_tau"]  # dimensionless
     q_T = jm.params["power_laws"]["q_T"]  # dimensionless
     eps = jm.params["geometry"]["epsilon"]  # dimensionless
-    
-    tau_0 = 2. * a_k * w_0 * n_0**2. * chi_0**2. * T_0**-1.35 * freq**-2.1 * \
-            np.sin(np.radians(inc))**-1.
-    
+    mod_r_0 = jm.params['geometry']['mod_r_0'] * con.au * 1e2  # cm
+    mod_y_0 = mod_r_0 * np.sin(np.radians(inc))  # cm
+    r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
+    y_0 = r_0 * np.sin(np.radians(inc))  # cm
+
+
+    d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
+
+    # Convert y_max/y_min from arcseconds to cm
+    y_max = np.tan(y_max * con.arcsec) * d + mod_y_0 - y_0  # in cm
+    if y_min is not None:
+        y_min = np.tan(y_min * con.arcsec) * d + mod_y_0 - y_0 # in cm
+    else:
+        y_min = mod_y_0
+
+    # Calculate optical depth at base of jet
+    tau_0 = 2. * a_k * w_0 * (n_0 * x_0) ** 2. * T_0 ** -1.35 * freq ** -2.1 * \
+            np.sin(np.radians(inc)) ** -1.
+
     c = 1. + eps + q_T
-    
+
     def indef_integral(yval):
-        tau = tau_0 * (yval / y_0)**q_tau
-        val = y_0**-(eps + q_T) * yval**c
-        val *= (c * tau**(-c / q_tau) * gammainc(c / q_tau, tau)) + q_tau
-        val /= q_tau * c
-        return float(val)
-    
-    flux = 2. * w_0 * d**-2. * a_j * a_k**-1. * T_0 * freq**2.
-    flux *= indef_integral(y_max) - indef_integral(y_0)  # erg cm^-2 s^-1 Hz^-1
-    flux *= 1e-7 * 1e2**2.  # W m^-2 Hz^-1
-    return flux / 1e-26  # Jy
+        """yval in cm"""
+        const = 2. * w_0 * d ** -2. * a_j * a_k ** -1. * T_0 * freq ** 2.
+        rho = yval / mod_r_0
+        tau = tau_0 * rho ** q_tau
+
+        p1 = yval / (q_tau * c) * rho ** (c - 1.) * tau ** (-c / q_tau)
+        p2 = q_tau * tau ** (c / q_tau) + c * gammainc(c / q_tau, tau)
+
+        return const * (float(p1) * float(p2))
+
+    flux = indef_integral(y_max) - indef_integral(y_min)
+    flux *= 1e-7 * 1e2 ** 2.  # W m^-2 Hz^-1
+
+    return flux / 1e-26
 
 def import_vanHoof2014(errors=False):
     if errors:
-        from  uncertainties import ufloat as uf
+        from uncertainties import ufloat as uf
 
-    datafile = os.sep.join([os.path.expanduser('~'), "Dropbox",
-                            "SpyderProjects", "vajepy", "files",
-                            "vanHoofetal2014.data"]) 
+    datafile = os.sep.join([cfg.dcys['files'], "vanHoofetal2014.data"])
 
     data = []
     with open(datafile, 'rt') as f:
@@ -197,8 +212,8 @@ def import_vanHoof2014(errors=False):
         unc_lines = [[float(_) for _ in l.split()] for l in lines[192:]]
         
         logus = np.linspace(np.round(logu_start, decimals=1),
-                            np.round(logu_start + (step * (n_logu - 1)), decimals=1),
-                            n_logu)
+                            np.round(logu_start + (step * (n_logu - 1)),
+                                     decimals=1), n_logu)
 
         loggam2s = np.linspace(np.round(loggam2_start, decimals=1),
                                np.round(loggam2_start +
@@ -275,7 +290,7 @@ def tau_r(jm, freq, r):
     a_j, a_k = 6.5E-38, 0.212  # given as constants of cgs equations
     d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
     inc = jm.params['geometry']['inc']  # degrees
-    r *= con.au * 1e2  # cm
+    mod_r_0 = jm.params['geometry']['mod_r_0'] * con.au * 1e2  # cm
     r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
     y_0 = r_0 * np.sin(np.radians(inc))  # cm
     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
@@ -288,4 +303,28 @@ def tau_r(jm, freq, r):
     tau_0 = 2. * a_k * w_0 * n_0 ** 2. * chi_0 ** 2. * T_0 ** -1.35 * \
             freq** -2.1 * np.sin(np.radians(inc)) ** -1.
 
+    return tau_0 * (((r * con.au * 1e2) + mod_r_0 - r_0) / mod_r_0)**q_tau
     return tau_0 * (r / r_0)**q_tau
+
+if __name__ == '__main__':
+    import matplotlib.pylab as plt
+    from RaJePy.classes import JetModel
+    import RaJePy as rjp
+
+    jm = JetModel(rjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
+
+    freqs = np.logspace(8, 12, 13)
+    fluxes, fluxes_approx = [], []
+    r_0 = jm.params['geometry']['r_0']
+    dist = jm.params['target']['dist']
+    for freq in freqs:
+        fluxes.append(2 * flux_expected_r86(jm, freq, .5))
+        fluxes_approx.append(2. * approx_flux_expected_r86(jm, freq))
+
+    plt.close('all')
+
+    plt.loglog(freqs, fluxes, 'ro')
+    plt.loglog(freqs, fluxes_approx, 'gx')
+
+    plt.show()
+
