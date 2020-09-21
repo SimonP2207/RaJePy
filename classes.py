@@ -26,7 +26,9 @@ from scipy.integrate import dblquad, tplquad
 from shutil import get_terminal_size
 from matplotlib.colors import LogNorm
 
+from RaJePy import cnsts as rjpcnsts
 from RaJePy import logger
+from RaJePy import _config as cfg
 from RaJePy.maths import geometry as mgeom
 from RaJePy.maths import physics as mphys
 from RaJePy.plotting import functions as pfunc
@@ -469,6 +471,7 @@ class JetModel:
                 for idxz, z in enumerate(xrow):
                     count += 1
                     x, y = xx[idxy][idxx][idxz], yy[idxy][idxx][idxz]
+
                     verts = ((x, y, z), (x + cs, y, z),
                              (x, y + cs, z), (x + cs, y + cs, z),
                              (x, y, z + cs), (x + cs, y, z + cs),
@@ -569,6 +572,8 @@ class JetModel:
                             ff = ch_vol.volume / cs ** 3.
                             area = ch_area.volume / cs ** 2.
                         except:
+                            print("ConvexHull failed at "
+                                  "x={}au, y={}au, z={}au".format(x, y, z))
                             x /= cs
                             y /= cs
                             z /= cs
@@ -596,8 +601,8 @@ class JetModel:
 
                         # Accurately calculate filling fractions for 5 base
                         # cell layers
-                        if ((np.round(z / cs) - np.round(r_0_cs) < 0) and
-                                (np.round(z / cs) - np.round(r_0_cs) > -1)):
+                        if ((np.round(z / cs) - np.round(r_0_cs) < -5) and
+                            (np.round(z / cs) - np.round(r_0_cs) > -1)):
                             x /= cs
                             y /= cs
                             z /= cs
@@ -707,11 +712,6 @@ class JetModel:
         r_0 = self.params['geometry']['r_0'] / self.params['grid']['c_size']
         eps = self.params['geometry']['epsilon']
 
-        # mlr = self.params['properties']['n_0'] * 1e6 * np.pi
-        # mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H")
-        # mlr *= (self.params['geometry']['w_0'] * con.au)**2.
-        # mlr *= self.params['properties']['v_0'] * 1e3  # kg/s
-
         # Mass of slice with z-width == 1 full cell
         mass_full_slice = self._ss_jml * (self.csize * con.au /  # kg
                                           (self.params['properties'][
@@ -802,13 +802,14 @@ class JetModel:
 
         return av_chis
 
-    @property
-    def number_density(self):
-        if hasattr(self, '_nd'):
-            return self._nd * self.chi_xyz
-
+    def plot_mass_volume_slices(self):
+        """
+        Plot mass and volume slices as check for consistency (i.e. mass/volume
+        are conserved).
+        """
         def m_slice(a, b):
-            """Mass of slice over the interval from a --> b in z, in kg"""
+            """Mass of slice over the interval from a --> b in z,
+            in kg calculated from model parameters"""
             n_0 = self.params["properties"]["n_0"] * 1e6
             mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
             r_0 = self.params["geometry"]["r_0"] * con.au
@@ -818,6 +819,8 @@ class JetModel:
             mu = self.params['properties']['mu'] * mphys.atomic_mass("H")
 
             def indef_integral(z):
+                """Volume of slice over the interval from a --> b in z,
+                in m^3 calculated from model parameters"""
                 c = 1 + q_n + 2. * eps
                 num_p1 = mu * np.pi * mod_r_0 * n_0 * w_0 ** 2.
                 num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
@@ -841,6 +844,132 @@ class JetModel:
                 return num_p1 * num_p2 / c
 
             return indef_integral(b) - indef_integral(a)
+
+        a = np.abs(self.zs + self.csize / 2) - self.csize / 2
+        b = np.abs(self.zs + self.csize / 2) + self.csize / 2
+
+        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
+        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
+        a = np.where(a <= self.params['geometry']['r_0'],
+                     self.params['geometry']['r_0'], a)
+
+        a *= con.au
+        b *= con.au
+
+        # Use the above functions to calculate what each slice's mass should be
+        mslices_calc = m_slice(a, b)
+        vslices_calc = v_slice(a, b)
+
+        # Calculate cell volumes and slice volumes
+        vcells = self.fill_factor * (self.csize * con.au)**3.
+        vslices = np.nansum(np.nansum(vcells, axis=0), axis=0)
+
+        # Calculate mass density of cells (in kg m^-3)
+        mdcells = self.number_density * self.params['properties']['mu'] *\
+                  mphys.atomic_mass("H") * 1e6
+
+        # Calculate cell masses
+        mcells = mdcells * vcells
+
+        # Sum cell masses to get slice masses
+        mslices = np.nansum(np.nansum(mcells, axis=0), axis=0)
+
+        vslices_calc /= con.au**3.
+        mslices_calc /= rjpcnsts.MSOL
+        vslices /= con.au**3.
+        mslices /= rjpcnsts.MSOL
+
+        verrs = vslices - vslices_calc
+        merrs = mslices - mslices_calc
+
+        vratios = vslices / vslices_calc
+        mratios = mslices / mslices_calc
+
+        # Average z-value for each slice
+        zs = np.mean([a, b], axis=0) / con.au
+        zs *= np.sign(self.zs + self.csize / 2)
+
+        plt.close('all')
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True,
+                                       figsize=[cfg.plots["dims"]["column"],
+                                         cfg.plots["dims"]["column"] * 2])
+
+        ax1b = ax1.twinx()
+        ax2b = ax2.twinx()
+        ax1b.sharey(ax2b)
+
+        ax1b.plot(zs, vratios, ls='-', zorder=1, color='slategrey', lw=2)
+        ax2b.plot(zs, mratios, ls='-', zorder=1, color='slategrey', lw=2)
+
+        for ax in (ax1b, ax2b):
+            ax.tick_params(which='both', direction='in', color='slategrey')
+            ax.tick_params(axis='y', which='both', colors='slategrey')
+            ax.spines['right'].set_color('slategrey')
+            ax.yaxis.label.set_color('slategrey')
+            ax.minorticks_on()
+
+        ax1.tick_params(axis='x', labelbottom=False)
+
+        ax1.plot(zs, vslices, color='r', ls='-', zorder=2)
+        ax1.plot(zs, vslices_calc, color='b', ls=':', zorder=3)
+
+        ax2.plot(zs, mslices, color='r', ls='-', zorder=2)
+        ax2.plot(zs, mslices_calc, color='b', ls=':', zorder=3)
+
+        ax2.set_xlabel(r"$z \, \left[ {\rm au} \right]$")
+
+        ax1.set_ylabel(r"$V_{\rm slice} \, \left[ {\rm au}^3 \right]$")
+        ax2.set_ylabel(r"$M_{\rm slice} \, \left[ {\rm M}_\odot \right]$")
+
+        ax1.tick_params(which='both', direction='in', top=True)
+        ax2.tick_params(which='both', direction='in', top=True)
+
+        ax1b.set_ylabel(r"$\ \frac{V^{\rm model}_{\rm slice}}"
+                        r"{V^{\rm actual}_{\rm slice}}$")
+        ax2b.set_ylabel(r"$\ \frac{M^{\rm model}_{\rm slice}}"
+                        r"{M^{\rm actual}_{\rm slice}}$")
+
+        plt.subplots_adjust(wspace=0, hspace=0)
+
+        ax1b.set_ylim(0, 1.99)
+
+        ax1.set_box_aspect(1)
+        ax2.set_box_aspect(1)
+
+        ax1.set_zorder(ax1b.get_zorder() + 1)
+        ax2.set_zorder(ax2b.get_zorder() + 1)
+
+        # Set ax's patch invisible
+        ax1.patch.set_visible(False)
+        ax2.patch.set_visible(False)
+
+        # Set axtwin's patch visible and colorize its background white
+        ax1b.patch.set_visible(True)
+        ax2b.patch.set_visible(True)
+        ax1b.patch.set_facecolor('white')
+        ax2b.patch.set_facecolor('white')
+
+        plt.show()
+
+        return None
+
+    @property
+    def xs(self):
+        return jm.grid[0][0][::,0]
+
+    @property
+    def ys(self):
+        return self.grid[1][::,0][::,0]
+
+    @property
+    def zs(self):
+        return self.grid[2][0][0]
+
+    @property
+    def number_density(self):
+        if hasattr(self, '_nd'):
+            return self._nd * self.chi_xyz
 
         z = np.abs(self.grid[2] + 0.5 * self.csize)
 
@@ -871,6 +1000,9 @@ class JetModel:
         #
         # return self._nd * self.chi_xyz
 
+        # Method 1, i.e. via Reynolds (1986) power-law for n(r) and
+        # averaging cell number density over z-axis extent of each cell. See
+        # https://www.math24.net/average-value-function/ for math
         def indef_integral(z):
             num_p1 = self.params['properties']['n_0'] * \
                      self.params["geometry"]["mod_r_0"]
@@ -881,20 +1013,10 @@ class JetModel:
             den = self.params["power_laws"]["q_n"] + 1.
             return num_p1 * num_p2 / den
 
-        # Method 1, i.e. via Reynolds (1986) power-law for n(r) and
-        # averaging cell number density over z-axis extent of each cell. See
-        # https://www.math24.net/average-value-function/ for math
-        # nd = self.params['properties']['n_0']
-        # nd *= self.params['geometry']['mod_r_0'] **\
-        #       -self.params["power_laws"]["q_n"]
-        # nd *= (b ** (self.params["power_laws"]["q_n"] + 1) -
-        #        a ** (self.params["power_laws"]["q_n"] + 1))
-        # nd /= self.params["power_laws"]["q_n"] + 1
-        # nd /= self.csize
         nd = indef_integral(b) - indef_integral(a)
-        nd /= self.csize
+        nd /= b - a
 
-        nd = np.where(self.fill_factor > 0, nd, np.NaN) * self.fill_factor
+        nd = np.where(self.fill_factor > 0, nd, np.NaN)
 
         # nd = self.mass / (self.fill_factor * (jm.csize * con.au)**3.)
         # nd /=  self.params['properties']['mu'] * mphys.atomic_mass("H")
@@ -903,7 +1025,7 @@ class JetModel:
         self.number_density = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN,
                                             neginf=np.NaN)
 
-        return self._nd * self.chi_xyz
+        return self.number_density * self.chi_xyz
 
     @number_density.setter
     def number_density(self, new_nds):
@@ -950,9 +1072,9 @@ class JetModel:
         # xi *= (b ** (self.params["power_laws"]["q_x"] + 1) -
         #        a ** (self.params["power_laws"]["q_x"] + 1))
         # xi /= self.params["power_laws"]["q_x"] + 1
-        # xi /= self.csize
+        # xi /= b - a
         xi = indef_integral(b) - indef_integral(a)
-        xi /= self.csize
+        xi /= b - a
         xi = np.where(self.fill_factor > 0., xi, np.NaN)
 
         self.ion_fraction = xi
@@ -969,14 +1091,13 @@ class JetModel:
               (self.csize * con.au / con.parsec *
                (self.fill_factor / self.areas))
 
-        from scipy.ndimage import rotate
-        ems = rotate(ems, axes=(2, 0), reshape=True, order=0, prefilter=False,
-                     angle=90. - self.params['geometry']['inc'])
-        ems = rotate(ems, axes=(2, 1), reshape=True, order=0, prefilter=False,
-                     angle=self.params['geometry']['pa'])
+        # from scipy.ndimage import rotate
+        # ems = rotate(ems, axes=(2, 0), reshape=True, order=0, prefilter=False,
+        #              angle=90. - self.params['geometry']['inc'])
+        # ems = rotate(ems, axes=(2, 1), reshape=True, order=0, prefilter=False,
+        #              angle=self.params['geometry']['pa'])
 
-        ems = np.nansum(ems, axis=0)
-        # self.emission_measure = ems
+        ems = np.nansum(ems, axis=1)
 
         if savefits:
             self.save_fits(ems.T, savefits, 'em')
@@ -1006,7 +1127,7 @@ class JetModel:
         """
         # Gaunt factors of van Hoof et al. (2014). Use if constant temperature
         # as computation via this method across a grid takes too long
-        if self.params['power_laws']['q_T'] == 0.1241:
+        if self.params['power_laws']['q_T'] == 0.875:
             gff = mphys.gff(freq, self.params['properties']['T_0'])
 
         # Equation 1 of Reynolds (1986) otherwise as an approximation
@@ -1020,13 +1141,13 @@ class JetModel:
               (self.csize * con.au * 1e2 * \
                (self.fill_factor / self.areas)) * gff
 
-        from scipy.ndimage import rotate
-        tff = rotate(tff, axes=(2, 0), reshape=True, order=0, prefilter=False,
-                     angle=90. - self.params['geometry']['inc'])
-        tff = rotate(tff, axes=(2, 1), reshape=True, order=0, prefilter=False,
-                     angle=self.params['geometry']['pa'])
+        # from scipy.ndimage import rotate
+        # tff = rotate(tff, axes=(2, 0), reshape=True, order=0, prefilter=False,
+        #              angle=90. - self.params['geometry']['inc'])
+        # tff = rotate(tff, axes=(2, 1), reshape=True, order=0, prefilter=False,
+        #              angle=self.params['geometry']['pa'])
 
-        tau_ff = np.nansum(tff, axis=0)
+        tau_ff = np.nansum(tff, axis=1)
 
         if savefits:
             self.save_fits(tau_ff.T, savefits, 'tau', freq)
@@ -1037,15 +1158,16 @@ class JetModel:
         """
         Radio intensity as viewed along x-axis (in W m^-2 Hz^-1 sr^-1)
         """
+        # Rotation doesn't really belong here
+        # from scipy.ndimage import rotate
+        # ts = rotate(self.temperature, axes=(2, 0), reshape=True, order=0,
+        #             prefilter=False,
+        #             angle=90. - self.params['geometry']['inc'])
+        # ts = rotate(ts, axes=(2, 1), reshape=True, order=0, prefilter=False,
+        #             angle=self.params['geometry']['pa'])
 
-        from scipy.ndimage import rotate
-        ts = rotate(self.temperature, axes=(2, 0), reshape=True, order=0,
-                    prefilter=False,
-                    angle=90. - self.params['geometry']['inc'])
-        ts = rotate(ts, axes=(2, 1), reshape=True, order=0, prefilter=False,
-                    angle=self.params['geometry']['pa'])
-
-        T_b = np.nanmean(np.where(ts > 0., ts, np.NaN), axis=0) * \
+        ts = self.temperature
+        T_b = np.nanmean(np.where(ts > 0., ts, np.NaN), axis=1) * \
               (1. - np.exp(-self.optical_depth_ff(freq)))
 
         ints = 2. * freq ** 2. * con.k * T_b / con.c ** 2.
@@ -1060,9 +1182,9 @@ class JetModel:
         Return flux (in Jy)
         """
         ints = self.intensity_ff(freq)
-        fluxes = ints * np.tan((self.csize * con.au) /
-                               (self.params["target"]["dist"] *
-                                con.parsec)) ** 2. / 1e-26
+        fluxes = ints * np.arctan((self.csize * con.au) /
+                                  (self.params["target"]["dist"] *
+                                   con.parsec)) ** 2. / 1e-26
 
         if savefits:
             self.save_fits(fluxes.T, savefits, 'flux', freq)
@@ -1177,9 +1299,9 @@ class JetModel:
             den = self.params["power_laws"]["q_T"] + 1.
             return num_p1 * num_p2 / den
 
-        # xi /= self.csize
+        # xi /= b - a
         ts = indef_integral(b) - indef_integral(a)
-        ts /= self.csize
+        ts /= b - a
         ts = np.where(self.fill_factor > 0., ts, np.NaN)
 
         # Averaging cell temperature over z-axis extent of each cell. See
@@ -1190,7 +1312,7 @@ class JetModel:
         # ts *= (b ** (self.params["power_laws"]["q_T"] + 1) -
         #        a ** (self.params["power_laws"]["q_T"] + 1))
         # ts /= self.params["power_laws"]["q_T"] + 1
-        # ts /= self.csize
+        # ts /= b - a
         #
         # ts = np.where(self.fill_factor > 0., ts, np.NaN)
         self.temperature = ts
@@ -1245,9 +1367,9 @@ class JetModel:
             den = self.params["power_laws"]["q_v"] + 1.
             return num_p1 * num_p2 / den
 
-        # xi /= self.csize
+        # xi /= b - a
         vz = indef_integral(b) - indef_integral(a)
-        vz /= self.csize
+        vz /= b - a
         vz = np.where(self.fill_factor > 0., vz, np.NaN)
 
         # Averaging cell z-velocity over z-axis extent of each cell. See
@@ -1258,7 +1380,7 @@ class JetModel:
         # vz *= (b ** (self.params["power_laws"]["q_v"] + 1) -
         #        a ** (self.params["power_laws"]["q_v"] + 1))
         # vz /= self.params["power_laws"]["q_v"] + 1
-        # vz /= self.csize
+        # vz /= b - a
 
         # Effective radius of (x, y) point in jet stream i.e. from what radius
         # in the disc the material was launched
@@ -1339,7 +1461,7 @@ class JetModel:
 
         plt.close('all')
 
-        fig = plt.figure(figsize=(6.65, 6.65))
+        fig = plt.figure(figsize=([cfg.plots["dims"]["column"] * 2.] * 2))
 
         # Set common labels
         fig.text(0.5, 0.025, r'$\Delta x \, \left[ {\rm au} \right]$',
@@ -2304,7 +2426,7 @@ class ModelRun:
 
         return None  # self.runs[idx]['products']
 
-    def plot_fluxes(self, plot_time):
+    def plot_fluxes(self, plot_time, figsize=[cfg.plots["dims"]["column"]] * 2):
         freqs, fluxes = [], []
         for idx, run in enumerate(self.runs):
             if run['time'] == plot_time:
@@ -2318,6 +2440,9 @@ class ModelRun:
         freqs = np.array(freqs)
         fluxes = np.array(fluxes)
 
+        xlims = (10 ** (np.log10(np.min(freqs)) - 0.5),
+                 10 ** (np.log10(np.max(freqs)) + 0.5))
+
         alphas = []
         for n in np.arange(1, len(fluxes)):
             alphas.append(np.log10(fluxes[n] /
@@ -2326,35 +2451,34 @@ class ModelRun:
 
         plt.close('all')
 
-        fig, ax1 = plt.subplots(1, 1, figsize=(6., 6.))
+        fig, ax1 = plt.subplots(1, 1, figsize=figsize)
         ax2 = ax1.twinx()
 
-        ax2.plot([(f + freqs[i + 1]) for i, f in enumerate(freqs[:-1])],
-                 alphas, color='b', ls='None', mec='b', marker='o',
+        # Alphas are calculated at the middle of two neighbouring frequencies
+        # in logarithmic space, hence the need for caclulation of freqs_a,
+        # the logarithmic mean of the two frequencies
+        freqs_a = [10**np.mean(np.log10([f, freqs[i + 1]])) for i, f in
+                   enumerate(freqs[:-1])]
+        ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
                  mfc='cornflowerblue', lw=2, zorder=2)
 
-        freqs_r86 = np.logspace(np.log10(np.min(freqs)),
-                                np.log10(np.max(freqs)), 100)
+        freqs_r86 = np.logspace(np.log10(np.min(xlims)),
+                                np.log10(np.max(xlims)), 100)
         flux_exp = []
-
-        ymax = self.model.params['geometry']['mod_r_0'] -\
-               self.model.params['geometry']['r_0']
-        ymax /= self.model.params['target']['dist']
-        ymax += self.model.params['grid']['l_z'] * 0.5
-
-        ymin = self.model.params['geometry']['mod_r_0'] /\
-               self.model.params['target']['dist']
-
         for freq in freqs_r86:
             if self.model.params['grid']['l_z'] is not None:
-                f = mphys.flux_expected_r86(self.model, freq, ymax, ymin)
+                f = mphys.flux_expected_r86(self.model, freq,
+                                            self.model.params['grid']['l_z'] *
+                                            0.5)
             else:
-                scale = np.arctan(self.model.params['grid']['n_z'] *
+                ymax = np.arctan(self.model.params['grid']['n_z'] *
                                   self.model.params['grid']['c_size'] * 0.5 /
                                   (self.model.params['target']['dist'] *
                                    con.parsec / con.au)) / con.arcsec
-                f = mphys.flux_expected_r86(self.model, freq, ymax + scale,
-                                            ymin)
+                ymin = np.arctan(self.model.params["geometry"]['mod_r_0'] /
+                                  (self.model.params['target']['dist'] *
+                                   con.parsec / con.au)) / con.arcsec
+                f = mphys.flux_expected_r86(self.model, freq, ymax, ymin)
             flux_exp.append(f * 2.)  # for biconical jet
 
         alphas_r86 = []
@@ -2362,18 +2486,23 @@ class ModelRun:
             alphas_r86.append(np.log10(flux_exp[n] / flux_exp[n - 1]) /
                               np.log10(freqs_r86[n] / freqs_r86[n - 1]))
 
-        ax2.plot([(f + freqs_r86[i + 1]) for i, f in enumerate(freqs_r86[:-1])],
-                 alphas_r86, color='cornflowerblue', ls='--', lw=2,
+        # Alphas are calculated at the middle of two neighbouring frequencies
+        # in logarithmic space, hence the need for caclulation of freqs_a_r86
+        freqs_a_r86 = [10**np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f in
+                       enumerate(freqs_r86[:-1])]
+        ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--', lw=2,
                  zorder=1)
 
         ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
                    zorder=3, marker='o')
+
         ax1.loglog(freqs_r86, flux_exp, color='gray', ls='-', lw=2, zorder=1)
         ax1.loglog(freqs_r86,
                    mphys.approx_flux_expected_r86(self.model, freqs_r86) * 2.,
                    color='gray', ls='-.', lw=2, zorder=1)
-        ax1.set_xlim(np.min(freqs), np.max(freqs))
-        pfunc.equalise_axes(ax1)
+        ax1.set_xlim(xlims)
+        ax2.set_ylim(-0.2, 2.1)
+        pfunc.equalise_axes(ax1, fix_x=False)
 
         ax1.set_xlabel(r'$\nu \, \left[ {\rm Hz} \right]$', color='k')
         ax1.set_ylabel(r'$S_\nu \, \left[ {\rm Jy} \right]$', color='k')
@@ -2384,6 +2513,7 @@ class ModelRun:
         ax2.tick_params(axis='y', which='both', colors='b')
         ax2.spines['right'].set_color('b')
         ax2.yaxis.label.set_color('b')
+        ax2.minorticks_on()
 
         save_file = '_'.join(
             ["Jet", "lz" + str(self.model.params["grid"]["l_z"]),
@@ -2391,8 +2521,9 @@ class ModelRun:
         save_file += '.png'
         save_file = os.sep.join([self.dcy, save_file])
 
+        png_metadata = {"Description": "Hello, this is some test text"}
         print("Saving Radio SED figure to {}".format(save_file))
-        fig.savefig(save_file, bbox_inches='tight')
+        fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata)
 
         return None
 
@@ -2635,6 +2766,7 @@ if __name__ == '__main__':
     pline = ModelRun(jm, rjp.cfg.dcys['files'] + os.sep +
                     'example-pipeline-params.py')
 
+    # jm.plot_mass_volume_slices()
     pline.plot_fluxes(0)
 
     # def n_z(jm, z):

@@ -193,9 +193,7 @@ def import_vanHoof2014(errors=False):
     if errors:
         from uncertainties import ufloat as uf
 
-    datafile = os.sep.join([os.path.expanduser('~'), "Dropbox",
-                            "SpyderProjects", "vajepy", "files",
-                            "vanHoofetal2014.data"]) 
+    datafile = os.sep.join([cfg.dcys['files'], "vanHoofetal2014.data"])
 
     data = []
     with open(datafile, 'rt') as f:
@@ -214,8 +212,8 @@ def import_vanHoof2014(errors=False):
         unc_lines = [[float(_) for _ in l.split()] for l in lines[192:]]
         
         logus = np.linspace(np.round(logu_start, decimals=1),
-                            np.round(logu_start + (step * (n_logu - 1)), decimals=1),
-                            n_logu)
+                            np.round(logu_start + (step * (n_logu - 1)),
+                                     decimals=1), n_logu)
 
         loggam2s = np.linspace(np.round(loggam2_start, decimals=1),
                                np.round(loggam2_start +
