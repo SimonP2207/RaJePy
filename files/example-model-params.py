@@ -23,14 +23,14 @@ params = {
     "grid": {"n_x": 50,  # No. of cells in x
              "n_y": 50,  # No. of cells in y
              "n_z": 100,  # No. of cells in z
-             "l_z": .1,  # Length of z-axis in arcsec. Overrides n_x/n_y/n_z.
+             "l_z": .05,  # Length of z-axis in arcsec. Overrides n_x/n_y/n_z.
              "c_size": 0.2,  # Cell size (au)
              },
     "geometry": {"epsilon": 9. / 9.,  # Jet width index
                  "opang": 20.,  # Jet opening angle (deg)
                  "w_0": 0.06,  # Half-width of jet base (au)
                  "r_0": 0.00,  # Launching radius (au)
-                 "inc": 90.,  # Inclination angle (deg)
+                 "inc": 45.,  # Inclination angle (deg)
                  "pa": 0.,  # Jet position PA (deg)
                  "exp_cs": False,  # Transverse exp. density profile?
                  },

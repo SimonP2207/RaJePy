@@ -22,7 +22,7 @@ import matplotlib.pylab as plt
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from scipy.spatial import ConvexHull
-from scipy.integrate import dblquad, tplquad
+from scipy.spatial.transform import Rotation as R
 from shutil import get_terminal_size
 from matplotlib.colors import LogNorm
 
@@ -135,7 +135,10 @@ class JetModel:
             nx *= 2
             ny *= 2
             nz *= 2
-
+            # inc = -np.pi / 2 + np.radians(self.params["geometry"]["inc"])
+            # ny, nz = (int(ny * np.cos(inc) - nz * np.sin(inc)) + 1,
+            #           int(ny * np.sin(inc) + nz * np.cos(inc)) + 1)
+            # ny =
         else:
             # Enforce even number of cells in every direction
             nx = (self.params['grid']['n_x'] + 1) // 2 * 2
@@ -364,11 +367,11 @@ class JetModel:
 
         # Set up coordinate grid in x, y, z for grid's 1st octant only due to
         # assumption of reflective symmetry about x, y and z axes
-        xx, yy, zz = [_[int(self.ny / 2):,
-                      int(self.nx / 2):,
+        xx, yy, zz = [_[int(self.nx / 2):,
+                      :,#int(self.ny / 2):,
                       int(self.nz / 2):] for _ in self.grid]
 
-        nvoxels = (self.nx / 2) * (self.ny / 2) * (self.nz / 2)
+        nvoxels = (self.nx / 2) * (self.ny / 1) * (self.nz / 2)
 
         if self.log:
             self._log.add_entry(mtype="INFO",
@@ -385,87 +388,85 @@ class JetModel:
         oa = self.params['geometry']['opang']
         cs = self.csize
 
-        w_0_cs = w_0 / cs
-        r_0_cs = r_0 / cs
+        # w_0_cs = w_0 / cs
+        # r_0_cs = r_0 / cs
 
-        def hfun_area(n_z):
-            def func(x):
-                """
-                The upper boundary surface in z for area calculation
-                """
-                return n_z + 1.
-
-            return func
-
-        def gfun_area(w_0, n_y, n_z, r_0, eps, opang):
-            """
-            The lower boundary curve in z for area calculation
-            """
-
-            def func(x):
-                # return np.max([r_0, n_z,
-                #                r_0 * w_0 ** (-1. / eps) *
-                #                (x ** 2. + n_y ** 2.) ** (1. / (2. * eps))])
-                return np.max([r_0, n_z,
-                               mgeom.w_xy(x, n_y, w_0, r_0, eps, opang)])
-            return func
-
-        def hfun(w_0, n_y, n_z, r_0, eps, opang):
-            """
-            The upper boundary curve in y for volume calculation
-            """
-
-            def func(x):
-                # return np.min([np.sqrt(w_0 ** 2. *
-                #                        ((n_z + 1.) / r_0) ** (
-                #                                2 * eps) - x ** 2.),
-                #                n_y + 1])
-                return np.min([mgeom.w_xz(x, n_z, w_0, r_0, eps, opang),
-                               n_y + 1])
-
-            return func
-
-        def gfun(n_y):
-            def func(_):
-                """
-                The lower boundary curve in y for volume calculation
-                """
-                return n_y
-
-            return func
-
-        def rfun(n_z):
-            def func(_, __):
-                """
-                The upper boundary surface in z for volume calculation
-                """
-                return n_z + 1.
-
-            return func
-
-        def qfun(w_0, n_z, r_0, eps, opang):
-            """
-            The lower boundary surface in z for volume calculation
-            """
-
-            def func(x, y):
-                # return np.max([r_0 * w_0 ** (-1. / eps) *
-                #                (x ** 2. + y ** 2.) ** (1. / (2. * eps)),
-                #                r_0, n_z])
-                return np.max([mgeom.w_xy(x, y, w_0, r_0, eps, opang),
-                               r_0, n_z])
-
-            return func
-
-
-
+        # def hfun_area(n_z):
+        #     def func(x):
+        #         """
+        #         The upper boundary surface in z for area calculation
+        #         """
+        #         return n_z + 1.
+        #
+        #     return func
+        #
+        # def gfun_area(w_0, n_y, n_z, r_0, eps, opang):
+        #     """
+        #     The lower boundary curve in z for area calculation
+        #     """
+        #
+        #     def func(x):
+        #         # return np.max([r_0, n_z,
+        #         #                r_0 * w_0 ** (-1. / eps) *
+        #         #                (x ** 2. + n_y ** 2.) ** (1. / (2. * eps))])
+        #         return np.max([r_0, n_z,
+        #                        mgeom.w_xy(x, n_y, w_0, r_0, eps, opang)])
+        #     return func
+        #
+        # def hfun(w_0, n_y, n_z, r_0, eps, opang):
+        #     """
+        #     The upper boundary curve in y for volume calculation
+        #     """
+        #
+        #     def func(x):
+        #         # return np.min([np.sqrt(w_0 ** 2. *
+        #         #                        ((n_z + 1.) / r_0) ** (
+        #         #                                2 * eps) - x ** 2.),
+        #         #                n_y + 1])
+        #         return np.min([mgeom.w_xz(x, n_z, w_0, r_0, eps, opang),
+        #                        n_y + 1])
+        #
+        #     return func
+        #
+        # def gfun(n_y):
+        #     def func(_):
+        #         """
+        #         The lower boundary curve in y for volume calculation
+        #         """
+        #         return n_y
+        #
+        #     return func
+        #
+        # def rfun(n_z):
+        #     def func(_, __):
+        #         """
+        #         The upper boundary surface in z for volume calculation
+        #         """
+        #         return n_z + 1.
+        #
+        #     return func
+        #
+        # def qfun(w_0, n_z, r_0, eps, opang):
+        #     """
+        #     The lower boundary surface in z for volume calculation
+        #     """
+        #
+        #     def func(x, y):
+        #         # return np.max([r_0 * w_0 ** (-1. / eps) *
+        #         #                (x ** 2. + y ** 2.) ** (1. / (2. * eps)),
+        #         #                r_0, n_z])
+        #         return np.max([mgeom.w_xy(x, y, w_0, r_0, eps, opang),
+        #                        r_0, n_z])
+        #
+        #     return func
 
         ffs = np.zeros(np.shape(xx))
         areas = np.zeros(np.shape(xx))  # Areas as projected on to the y-axis
         count = 0
         progress = -1
         then = time.time()
-
+        incrot = R.from_euler('x', 90. - self.params["geometry"]["inc"],
+                              degrees=True)
         for idxy, yplane in enumerate(zz):
             for idxx, xrow in enumerate(yplane):
                 for idxz, z in enumerate(xrow):
@@ -477,6 +478,11 @@ class JetModel:
                              (x, y, z + cs), (x + cs, y, z + cs),
                              (x, y + cs, z + cs),
                              (x + cs, y + cs, z + cs))
+
+                    # Apply inclination to grid cells vertices' coordinates
+                    verts = incrot.apply(verts)
+                    verts = tuple([tuple(_) for _ in verts])
+
                     verts_inside = []
                     for vert in verts:
                         zjet = mgeom.w_xy(vert[0], vert[1], w_0, r_0, eps, oa)
@@ -566,66 +572,66 @@ class JetModel:
                             axis=0)
                         # Use scipy's ConvexHull's built in method to determine
                         # volume within jet boundary (MUST BE CONVEX POLYGON)
-                        try:
-                            ch_vol = ConvexHull(ph_verts)
-                            ch_area = ConvexHull(ph_verts.T[::2].T)
-                            ff = ch_vol.volume / cs ** 3.
-                            area = ch_area.volume / cs ** 2.
-                        except:
-                            print("ConvexHull failed at "
-                                  "x={}au, y={}au, z={}au".format(x, y, z))
-                            x /= cs
-                            y /= cs
-                            z /= cs
-                            b = np.min([mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps,
-                                                   oa),
-                                        x + 1.])
-                            ff = tplquad(lambda z, y, x: 1.,
-                                         a=x, b=b,
-                                         gfun=gfun(y),
-                                         hfun=hfun(w_0_cs, y, z, r_0_cs,
-                                                   eps, oa),
-                                         qfun=qfun(w_0_cs, z, r_0_cs, eps, oa),
-                                         rfun=rfun(z))[0]
-
-                            b_a = mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps, oa)
-
-                            area = dblquad(lambda z, x: 1.,
-                                           a=x, b=np.min([b_a, x + 1.]),
-                                           gfun=gfun_area(w_0_cs, y, z, r_0_cs,
-                                                          eps, oa),
-                                           hfun=hfun_area(z))[0]
-                            x *= cs
-                            y *= cs
-                            z *= cs
-
-                        # Accurately calculate filling fractions for 5 base
-                        # cell layers
-                        if ((np.round(z / cs) - np.round(r_0_cs) < -5) and
-                            (np.round(z / cs) - np.round(r_0_cs) > -1)):
-                            x /= cs
-                            y /= cs
-                            z /= cs
-
-                            # Volume
-                            b = np.min([mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps,
-                                                   oa),
-                                        x + 1.])
-                            ff = tplquad(lambda z, y, x: 1.,
-                                         a=x, b=b,
-                                         gfun=gfun(y),
-                                         hfun=hfun(w_0_cs, y, z, r_0_cs, eps,
-                                                   oa),
-                                         qfun=qfun(w_0_cs, z, r_0_cs, eps, oa),
-                                         rfun=rfun(z))[0]
-
-                            b_a = mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps, oa)
-
-                            area = dblquad(lambda z, x: 1.,
-                                           a=x, b=np.min([b_a, x + 1.]),
-                                           gfun=gfun_area(w_0_cs, y, z, r_0_cs,
-                                                          eps, oa),
-                                           hfun=hfun_area(z))[0]
+                        # try:
+                        ch_vol = ConvexHull(ph_verts)
+                        ch_area = ConvexHull(ph_verts.T[::2].T)
+                        ff = ch_vol.volume / cs ** 3.
+                        area = ch_area.volume / cs ** 2.
+                        # except:
+                        #     print("ConvexHull failed at "
+                        #           "x={}au, y={}au, z={}au".format(x, y, z))
+                        #     x /= cs
+                        #     y /= cs
+                        #     z /= cs
+                        #     b = np.min([mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps,
+                        #                            oa),
+                        #                 x + 1.])
+                        #     ff = tplquad(lambda z, y, x: 1.,
+                        #                  a=x, b=b,
+                        #                  gfun=gfun(y),
+                        #                  hfun=hfun(w_0_cs, y, z, r_0_cs,
+                        #                            eps, oa),
+                        #                  qfun=qfun(w_0_cs, z, r_0_cs, eps, oa),
+                        #                  rfun=rfun(z))[0]
+                        #
+                        #     b_a = mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps, oa)
+                        #
+                        #     area = dblquad(lambda z, x: 1.,
+                        #                    a=x, b=np.min([b_a, x + 1.]),
+                        #                    gfun=gfun_area(w_0_cs, y, z, r_0_cs,
+                        #                                   eps, oa),
+                        #                    hfun=hfun_area(z))[0]
+                        #     x *= cs
+                        #     y *= cs
+                        #     z *= cs
+                        #
+                        # # Accurately calculate filling fractions for 5 base
+                        # # cell layers
+                        # if ((np.round(z / cs) - np.round(r_0_cs) < -5) and
+                        #     (np.round(z / cs) - np.round(r_0_cs) > -1)):
+                        #     x /= cs
+                        #     y /= cs
+                        #     z /= cs
+                        #
+                        #     # Volume
+                        #     b = np.min([mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps,
+                        #                            oa),
+                        #                 x + 1.])
+                        #     ff = tplquad(lambda z, y, x: 1.,
+                        #                  a=x, b=b,
+                        #                  gfun=gfun(y),
+                        #                  hfun=hfun(w_0_cs, y, z, r_0_cs, eps,
+                        #                            oa),
+                        #                  qfun=qfun(w_0_cs, z, r_0_cs, eps, oa),
+                        #                  rfun=rfun(z))[0]
+                        #
+                        #     b_a = mgeom.w_yz(y, z, w_0_cs, r_0_cs, eps, oa)
+                        #
+                        #     area = dblquad(lambda z, x: 1.,
+                        #                    a=x, b=np.min([b_a, x + 1.]),
+                        #                    gfun=gfun_area(w_0_cs, y, z, r_0_cs,
+                        #                                   eps, oa),
+                        #                    hfun=hfun_area(z))[0]
                     ffs[idxy][idxx][idxz] = ff
                     areas[idxy][idxx][idxz] = area
 
@@ -659,7 +665,7 @@ class JetModel:
                                 time.gmtime(now - then)))
 
         # Reflect in x, y and z axes
-        for ax in (0, 1, 2):
+        for ax in (0, 2):
             ffs = np.append(np.flip(ffs, axis=ax), ffs, axis=ax)
             areas = np.append(np.flip(areas, axis=ax), areas, axis=ax)
 

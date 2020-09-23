@@ -6,6 +6,7 @@ Module handling all mathematical functions and methods
 import numpy as np
 from collections.abc import Iterable
 
+
 def w_xy(x, y, w_0, r_0, eps, opang):
     """
     Compute z-coordinate(s) of jet-boundary point given its x and y
@@ -50,7 +51,7 @@ def w_xy(x, y, w_0, r_0, eps, opang):
     #                         "-coordinate(s) must be float or Iterable")
     mod_r_0 = eps * w_0 / np.tan(np.radians(opang / 2.))
 
-    z = mod_r_0 * (np.sqrt(x**2. + y**2.) / w_0)**(1. / eps)
+    z = mod_r_0 * ((x**2. + y**2.)**.5 / w_0)**(1. / eps)
     z -= mod_r_0
     z += r_0
 
@@ -101,9 +102,10 @@ def w_xz(x, z, w_0, r_0, eps, opang):
     #                         "-coordinate(s) must be float or Iterable")
 
     mod_r_0 = eps * w_0 / np.tan(np.radians(opang / 2.))
-    y = np.sqrt(w_0**2. * ((z + mod_r_0 - r_0) / mod_r_0)**(2. * eps) - x**2.)
+    y = (w_0**2. * ((z + mod_r_0 - r_0) / mod_r_0)**(2. * eps) - x**2.)
+    y = np.abs(y) ** 0.5 * np.sign(y)
 
-    return np.where(z >= r_0, y, np.NaN)
+    return np.where(z >= r_0, y, 0.)
 
 
 def w_yz(y, z, w_0, r_0, eps, opang):
@@ -150,6 +152,7 @@ def w_yz(y, z, w_0, r_0, eps, opang):
     #                         "-coordinate(s) must be float or Iterable")
 
     mod_r_0 = eps * w_0 / np.tan(np.radians(opang / 2.))
-    x = np.sqrt(w_0**2. * ((z + mod_r_0 - r_0) / mod_r_0)**(2. * eps) - y**2.)
+    x = (w_0**2. * ((z + mod_r_0 - r_0) / mod_r_0)**(2. * eps) - y**2.)
+    x = np.abs(x) ** 0.5 * np.sign(x)
 
-    return np.where(z >= r_0, x, np.NaN)
+    return np.where(z >= r_0, x, 0.)
