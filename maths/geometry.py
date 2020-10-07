@@ -6,6 +6,19 @@ Module handling all mathematical functions and methods
 import numpy as np
 from collections.abc import Iterable
 
+def w_r(r, w_0, mod_r_0, r_0, eps):
+    return w_0 * ((r + mod_r_0 - r_0) / mod_r_0) ** eps
+
+def xyz_to_rw(x, y, z, inc, pa):
+    i = np.radians(inc)
+    t = np.radians(pa)
+    r = x * np.sin(i) * np.sin(t) + y * np.cos(i) + z * np.sin(i) * np.cos(t)
+    w = np.sqrt(np.sin(i) ** 2. * (-x ** 2. * np.sin(t) ** 2. - x * z *
+                                   np.sin(2. * t) + y ** 2. - z ** 2. *
+                                   np.cos(t) ** 2.)
+                - y * np.sin(2. * i) * (x * np.sin(t) + z * np.cos(t)) + x ** 2.
+                + z ** 2.)
+    return r, w
 
 def w_xy(x, y, w_0, r_0, eps, opang):
     """

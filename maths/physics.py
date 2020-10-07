@@ -157,7 +157,6 @@ def flux_expected_r86(jm, freq, y_max, y_min=None):
     r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
     y_0 = r_0 * np.sin(np.radians(inc))  # cm
 
-
     d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
 
     # Convert y_max/y_min from arcseconds to cm

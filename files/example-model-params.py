@@ -16,21 +16,21 @@ params = {
                "epoch": "J2000",
                "dist": 700.,  # pc
                "v_lsr": 0.0,  # km/s
-               "m_star": .5,  # M_sol
-               "r_1": 0.06,  # inner disc radii sourcing the jet in au
-               "r_2": 0.06,  # outer disc radii sourcing the jet in au
+               "m_star": 0.5,  # M_sol
+               "r_1": .5,  # inner disc radii sourcing the jet in au
+               "r_2": 2.5,  # outer disc radii sourcing the jet in au
                },
     "grid": {"n_x": 50,  # No. of cells in x
-             "n_y": 50,  # No. of cells in y
-             "n_z": 100,  # No. of cells in z
-             "l_z": .05,  # Length of z-axis in arcsec. Overrides n_x/n_y/n_z.
-             "c_size": 0.2,  # Cell size (au)
+             "n_y": 400,  # No. of cells in y
+             "n_z": 50,  # No. of cells in z
+             "l_z": 0.3,  # Length of z-axis in arcsec. Overrides n_x/n_y/n_z.
+             "c_size": 1.0,  # Cell size (au)
              },
     "geometry": {"epsilon": 9. / 9.,  # Jet width index
-                 "opang": 20.,  # Jet opening angle (deg)
-                 "w_0": 0.06,  # Half-width of jet base (au)
-                 "r_0": 0.00,  # Launching radius (au)
-                 "inc": 45.,  # Inclination angle (deg)
+                 "opang": 30.,  # Jet opening angle (deg)
+                 "w_0": 5.0,  # Half-width of jet base (au)
+                 "r_0": .5,  # Launching radius (au)
+                 "inc": 90.,  # Inclination angle (deg)
                  "pa": 0.,  # Jet position PA (deg)
                  "exp_cs": False,  # Transverse exp. density profile?
                  },
@@ -38,12 +38,12 @@ params = {
                    "q_T": 0.,  # Temperature index
                    "q_x": 0.,  # HII fraction index
                    },
-    "properties": {"v_0": 250.,  # Ejection velocity (km/s)
+    "properties": {"v_0": 500.,  # Ejection velocity (km/s)
                    "x_0": 0.1,  # Initial HII fraction
                    "n_0": None,  # Initial density (cm^-3)
                    "T_0": 1E4,  # Temperature (K)
                    "mu": 1.3,  # Mean atomic weight (m_H)
-                   "mlr": 1e-8,  # Msol / yr
+                   "mlr": 1e-5,  # Msol / yr
                    },
     "ejection": {"t_0": np.array([1200.]),  # Peak times of bursts (yr)
                  "hl": np.array([0.5]),  # Half-lives of bursts (yr)
@@ -52,6 +52,17 @@ params = {
              }
 
 # DO NOT CHANGE BELOW
+if params["grid"]["l_z"] is not None:
+    i = np.radians(params["geometry"]["inc"])
+    pa = np.radians(params["geometry"]["pa"])
+    rot_x = np.array([[1., 0., 0.],
+                      [0., np.cos(-i), -np.sin(-i)],
+                      [0., np.sin(-i), np.cos(-i)]])
+    rot_y = np.array([[np.cos(pa), 0., np.sin(pa)],
+                      [0., 1., 0.],
+                      [-np.sin(pa), 0., np.cos(pa)]])
+
+
 params["geometry"]["mod_r_0"] = params['geometry']['epsilon'] * \
                                 params['geometry']['w_0'] / \
                                 np.tan(np.radians(params['geometry']['opang']
