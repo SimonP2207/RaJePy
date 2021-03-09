@@ -8,6 +8,7 @@ from . import logger
 from . import maths
 from . import plotting
 from . import casa
+from . import miscellaneous
 
 # Numerical version:
 __version_info__ = (0, 0, 1)

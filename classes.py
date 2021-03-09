@@ -14,6 +14,8 @@ import sys
 import os
 import time
 import pickle
+from collections.abc import Iterable
+from typing import Union, Callable, List, Tuple
 
 import numpy as np
 import astropy.units as u
@@ -21,8 +23,6 @@ import scipy.constants as con
 import matplotlib.pylab as plt
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from scipy.spatial.transform import Rotation
-from scipy.spatial import ConvexHull
 from shutil import get_terminal_size
 from matplotlib.colors import LogNorm
 
@@ -31,6 +31,8 @@ from RaJePy import logger
 from RaJePy import _config as cfg
 from RaJePy.maths import geometry as mgeom
 from RaJePy.maths import physics as mphys
+from RaJePy.maths import rrls as mrrl
+from RaJePy.miscellaneous import functions as miscf
 from RaJePy.plotting import functions as pfunc
 
 from warnings import filterwarnings
@@ -38,166 +40,13 @@ from warnings import filterwarnings
 filterwarnings("ignore", category=RuntimeWarning)
 
 
-class Cell:
-    """
-    Class to handle cell data
-    """
-    def __init__(self, grid, centre, width):
-        self._centre = centre
-        self._width = width
-        self._grid = grid
-
-        x, y, z = self.centre
-
-        # # Establish non-inclined cell centre (deprecated)
-        # r = Rotation.from_euler('x', -90. + grid.inclination, degrees=True)
-        # x, y, z = r.apply(self.centre)
-
-        # Establish non-inclined vertices' positions
-        verts = ((x - width / 2., y - width / 2., z - width / 2.),  # 1
-                 (x + width / 2., y - width / 2., z - width / 2.),  # 2
-                 (x - width / 2., y + width / 2., z - width / 2.),  # 3
-                 (x + width / 2., y + width / 2., z - width / 2.),  # 4
-                 (x - width / 2., y - width / 2., z + width / 2.),  # 5
-                 (x + width / 2., y - width / 2., z + width / 2.),  # 6
-                 (x - width / 2., y + width / 2., z + width / 2.),  # 7
-                 (x + width / 2., y + width / 2., z + width / 2.))  # 8
-
-        # Coordinates of face mid-points
-        face_mp = ((centre[0], centre[1], z - width / 2.),  # a (z-lower)
-                   (centre[0], centre[1], z + width / 2.),  # b (z-upper)
-                   (centre[0], y - width / 2., centre[2]),  # c (y-lower)
-                   (centre[0], y + width / 2., centre[2]),  # d (y-upper)
-                   (x - width / 2., centre[1], centre[2]),  # e (x-lower)
-                   (x + width / 2., centre[1], centre[2]))  # f (x-upper)
-
-        # # Rotate cell about it's centre point w.r.t. x-axis to incline it
-        # r = Rotation.from_euler('x', 90. - grid.inclination, degrees=True)
-
-        # self._verts = r.apply(verts)
-        # self._face_mp = r.apply(face_mp)
-        self._verts = np.array(verts)
-        self._face_mp = np.array(face_mp)
-        self._face_nv = self._face_mp - centre  # Normal vectors for faces
-
-    @property
-    def face_mp(self):
-        """Coordinates for mid-points of each of the cell's faces in the
-        order (non-rotated) of z-lower, z-upper, y-lower, y-upper, x-lower
-        and x-upper"""
-        return self._face_mp
-
-
-    @property
-    def face_nv(self):
-        """Normal vectors of each of the cell's faces in the order
-        (non-rotated) of z-lower, z-upper, y-lower, y-upper, x-lower
-        and x-upper"""
-        return self._face_nv
-
-    @property
-    def grid(self):
-        return self._grid
-
-    @property
-    def centre(self):
-        return self._centre
-
-    @property
-    def width(self):
-        return self._width
-
-    @property
-    def verts(self): 
-        return self._verts
-
-class Grid:
-    def __init__(self, naxis, cwidth):  # , inclination):
-        self._shape = naxis
-        self._cwidth = cwidth
-
-        ccentresx = np.linspace((-self.shape[0] / 2 + .5) * self.cwidth,
-                                (self.shape[0] / 2 - .5) * self.cwidth,
-                                self.shape[0])
-        ccentresy = np.linspace((-self.shape[1] / 2 + .5) * self.cwidth,
-                                (self.shape[1] / 2 - .5) * self.cwidth,
-                                self.shape[1])
-        ccentresz = np.linspace((-self.shape[2] / 2 + .5) * self.cwidth,
-                                (self.shape[2] / 2 - .5) * self.cwidth,
-                                self.shape[2])
-
-        # r = Rotation.from_euler('x', 90. - inclination, degrees=True)
-
-        xx, yy, zz = np.meshgrid(ccentresx, ccentresy, ccentresz)
-
-        arr_centres = np.empty(tuple(list(naxis) + [3]), dtype=float)
-        arr_cells = np.empty(naxis, dtype=object)
-
-        for idxx, x in enumerate(ccentresx):
-            for idxy, y in enumerate(ccentresy):
-                for idxz, z in enumerate(ccentresz):
-                    # xyz = r.apply((xx[idxx][idxy][idxz],
-                    #                yy[idxx][idxy][idxz],
-                    #                zz[idxx][idxy][idxz]))
-                    xyz = (xx[idxx][idxy][idxz],
-                           yy[idxx][idxy][idxz],
-                           zz[idxx][idxy][idxz])
-                    arr_centres[idxx][idxy][idxz] = xyz
-                    arr_cells[idxx][idxy][idxz] = Cell(self, xyz, cwidth)
-
-        self._arr_cells = arr_cells
-        self._arr_centres = arr_centres
-
-    @staticmethod
-    def xyz_to_wr(xyz):
-        """Cartesian xyz coordinates to jet wr (width, radius) coordinates
-        assuming jet axis is along z-axis"""
-        return np.sqrt(xyz[0] ** 2. + xyz[1] ** 2.), xyz[2]
-
-    @property
-    def inclination(self):
-        """Inclination of grid in degrees"""
-        return self._inclination
-
-    @property
-    def arr_cells(self):
-        """Returns grid's array of cell instances"""
-        return self._arr_cells
-
-    @property
-    def arr_centres(self):
-        """Returns grid's array of cell's central (x,y,z) coordinates"""
-        return self._arr_centres
-
-    @property
-    def arr_centres_wr(self):
-        """Returns grid's array of cell's central jet's (w,r) coordinates"""
-        # Won't do typical hasattr(self, _arr_centres_wr) check avoiding
-        # recalculation because we may change cell coordinates at some point
-        # in the lifetime of a Grid instance
-        return  np.apply_along_axis(self.xyz_to_wr, 3, self.arr_centres)
-
-    @property
-    def shape(self):
-        return self._shape
-
-    @property
-    def cwidth(self):
-        """Grid's cells' widths in au"""
-        return self._cwidth
-
-    @property
-    def dims(self):
-        """Dimensions of grid in cells as a 3-tuple, (xdim, ydim, zdim)"""
-        return tuple(_ * self.cwidth for _ in self.shape)
-
 class JetModel:
     """
     Class to handle physical model of an ionised jet from a young stellar object
     """
 
     @classmethod
-    def load_model(cls, model_file):
+    def load_model(cls, model_file: str):
         """
         Loads model from a saved state (pickled file)
 
@@ -219,7 +68,7 @@ class JetModel:
         loaded = pickle.load(open(model_file, 'rb'))
 
         # Create new JetModel class instance
-        new_jm = cls(loaded["params"])
+        new_jm = cls(loaded["params"], log=loaded['log'])
 
         # If fill factors/projected areas have been previously calculated,
         # assign to new instance
@@ -233,7 +82,8 @@ class JetModel:
 
         return new_jm
 
-    def __init__(self, params, verbose=True, log=None):
+    def __init__(self, params: Union[dict, str], verbose: bool = True,
+                 log=None):
         """
 
         Parameters
@@ -244,6 +94,7 @@ class JetModel:
         verbose : bool
             verbosity in terminal. True for verbosity, False for silence
         """
+        # Import jet parameters
         if isinstance(params, dict):
             self._params = params
         elif isinstance(params, str):
@@ -252,39 +103,24 @@ class JetModel:
             if os.path.dirname(params) not in sys.path:
                 sys.path.append(os.path.dirname(params))
 
-            jp = __import__(os.path.basename(params).strip('.py'))
+            jp = __import__(os.path.basename(params).rstrip('.py'))
+            err = miscf.check_model_params(jp.params)
+            if err is not None:
+                raise err
             self._params = jp.params
+
+            sys.path.remove(os.path.dirname(params))
         else:
-            raise TypeError("Supplied arg params must be dict or str")
+            raise TypeError("Supplied arg params must be dict or file path ("
+                            "str)")
 
         # self._dcy = self.params['dcys']['model_dcy']
         self._name = self.params['target']['name']
         self._csize = self.params['grid']['c_size']
         self._log = log
 
-        # Number of voxels in x, y, z
+        # Determine number of cells in x, y, and z-directions
         if self.params['grid']['l_z'] is not None:
-            # nz = int(np.ceil(self.params['grid']['l_z'] / 2. *
-            #                  self.params['target']['dist'] /
-            #                  self.params['grid']['c_size']))
-            # nx = int(np.ceil(mgeom.w_yz(0., nz + 1.,
-            #                             self.params['geometry']['w_0'] /
-            #                             self.params['grid']['c_size'],
-            #                             self.params['geometry']['r_0'] /
-            #                             self.params['grid']['c_size'],
-            #                             self.params['geometry']['epsilon'],
-            #                             self.params['geometry']['opang'])
-            #                  )
-            #          )
-            # ny = int(np.ceil(mgeom.w_xz(0., nz + 1.,
-            #                             self.params['geometry']['w_0'] /
-            #                             self.params['grid']['c_size'],
-            #                             self.params['geometry']['r_0'] /
-            #                             self.params['grid']['c_size'],
-            #                             self.params['geometry']['epsilon'],
-            #                             self.params['geometry']['opang'])
-            #                  )
-            #          )
             i = np.radians(90. - self.params["geometry"]["inc"])
             if i == 0:
                 r_z = self.params['grid']['l_z']
@@ -314,11 +150,7 @@ class JetModel:
             for aspect in pos.keys():
                 p = rot_x.dot(rot_y.dot(pos[aspect]))
                 p = [int(_) + 1 for _ in p]
-                pos[aspect] = [_ if _ % 2 == 0 else _ + 1 for _ in p]
-
-            nx, ny, nz = (np.max([pos[_][0] for _ in pos]),
-                          np.max([pos[_][1] for _ in pos]),
-                          np.max([pos[_][2] for _ in pos]))
+                pos[aspect] = [_ if _ % 2 == 0 else _ + 1 * np.sign(_) for _ in p]
 
             nx, ny, nz = (pos['right'][0],
                           pos['rear'][1],
@@ -327,6 +159,15 @@ class JetModel:
             nx *= 2
             ny *= 2
             nz *= 2
+            self.log.add_entry("INFO",
+                               'For a (bipolar) jet length of {:.1f}", cell '
+                               'size of {:.2f}au and distance of {:.0f}pc, a '
+                               'grid size of (n_x, n_y, n_z) = ({}, {}, {}) '
+                               'voxels is calculated'
+                               ''.format(self.params['grid']['l_z'],
+                                         self.params["grid"]["c_size"],
+                                         self.params["target"]["dist"],
+                                         nx, ny, nz))
 
         else:
             # Enforce even number of cells in every direction
@@ -334,36 +175,40 @@ class JetModel:
             ny = (self.params['grid']['n_y'] + 1) // 2 * 2
             nz = (self.params['grid']['n_z'] + 1) // 2 * 2
 
-        self._nx = nx
-        self._ny = ny
-        self._nz = nz
-        self._ff = None
-        self._areas = None
-        self._grid = None
-        self._rr = None
-        self._ww = None
+        self._nx = nx  # number of cells in x
+        self._ny = ny  # number of cells in y
+        self._nz = nz  # number of cells in z
+        self._ff = None  # cell fill factors
+        self._areas = None  # cell projected areas along y-axis
+        self._grid = None  # grid of cell-centre positions
+        self._rr = None  # grid of cell-centre r-coordinates
+        self._ww = None  # grid of cell-centre w-coordinates
+        self._pp = None  # grid of cell-centre phi-coordinates
 
-        mlr = self.params['properties']['n_0'] * 1e6 * np.pi
-        mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H")
-        mlr *= (self.params['geometry']['w_0'] * con.au) ** 2.
+
+        mlr = self.params['properties']['n_0'] * 1e6 * np.pi  # m^-3
+        mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H") # kg/m^3
+        mlr *= (self.params['geometry']['w_0'] * con.au) ** 2.  # kg/m
         mlr *= self.params['properties']['v_0'] * 1e3  # kg/s
 
-        self._ss_jml = mlr
+        self._ss_jml = mlr  # steady state mass loss rate
 
+        # Function to return jet mass loss rate at any time
         def func(jml):
             def func2(t):
                 "Mass loss rate as function of time"
-                return jml  # * (t / t)
+                return jml
             return func2
 
-        self._jml_t = func(self._ss_jml)
+        self._jml_t = func(self._ss_jml)  # JML as function of time function
         self._ejections = {}  # Record of any ejection events
         for idx, ejn_t0 in enumerate(self.params['ejection']['t_0']):
             self.add_ejection_event(ejn_t0 * con.year,
                                     mlr * self.params['ejection']['chi'][idx],
                                     self.params['ejection']['hl'][idx] *
                                     con.year)
-        self._time = 0. * con.year
+
+        self._time = 0. * con.year  # Current time in jet model
 
     def __str__(self):
         p = self.params
@@ -374,9 +219,12 @@ class JetModel:
              ('q_T', format(p['power_laws']['q_T'], '+.3f')),
              ('q_x', format(p['power_laws']['q_x'], '+.3f')),
              ('q_n', format(p['power_laws']['q_n'], '+.3f')),
+             ('q^d_v', format(p['power_laws']['q^d_v'], '+.3f')),
+             ('q^d_T', format(p['power_laws']['q^d_T'], '+.3f')),
+             ('q^d_x', format(p['power_laws']['q^d_x'], '+.3f')),
+             ('q^d_n', format(p['power_laws']['q^d_n'], '+.3f')),
              ('q_tau', format(p['power_laws']['q_tau'], '+.3f')),
              ('cell', format(p['grid']['c_size'], '.1f') + ' au'),
-             ('r_1', format(p['target']['r_1'], '+.1f') + ' au'),
              ('w_0', format(p['geometry']['w_0'], '.2f') + ' au'),
              ('r_0', format(p['geometry']['r_0'], '.2f') + ' au'),
              ('v_0', format(p['properties']['v_0'], '.0f') + ' km/s'),
@@ -386,11 +234,9 @@ class JetModel:
              ('i', format(p['geometry']['inc'], '+.1f') + ' deg'),
              ('theta', format(p['geometry']['pa'], '+.1f') + ' deg'),
              ('D', format(p['target']['dist'], '+.0f') + ' pc'),
-             ('M*', format(p['target']['m_star'], '+.1f') + ' Msol'),
-             ('r_1', format(p['target']['r_1'], '+.1f') + ' au'),
-             ('r_2', format(p['target']['r_2'], '+.1f') + ' au'),
-             ('cross-section',
-              'exp' if p['geometry']['exp_cs'] else 'constant')]
+             ('M*', format(p['target']['M_star'], '+.1f') + ' Msol'),
+             ('R_1', format(p['target']['R_1'], '+.1f') + ' au'),
+             ('R_2', format(p['target']['R_2'], '+.1f') + ' au')]
 
         # Add current model time if relevant (i.e. bursts are included)
         if len(p['ejection']['t_0']) > 0:
@@ -462,7 +308,7 @@ class JetModel:
         return self._time
 
     @time.setter
-    def time(self, new_time):
+    def time(self, new_time: float):
         self._time = new_time
 
     @property
@@ -470,7 +316,7 @@ class JetModel:
         return self._jml_t
 
     @jml_t.setter
-    def jml_t(self, new_jml_t):
+    def jml_t(self, new_jml_t: Callable[[float], float]):
         self._jml_t = new_jml_t
 
     def add_ejection_event(self, t_0, peak_jml, half_life):
@@ -525,7 +371,7 @@ class JetModel:
         self._ejections[str(len(self._ejections) + 1)] = record
 
     @property
-    def grid(self):
+    def grid(self) -> np.ndarray:
         if self._grid:
             return self._grid
         self._grid = np.meshgrid(np.linspace(-self.nx / 2 * self.csize,
@@ -536,7 +382,8 @@ class JetModel:
                                              self.ny),
                                  np.linspace(-self.nz / 2 * self.csize,
                                              (self.nz / 2 - 1.) * self.csize,
-                                             self.nz))
+                                             self.nz),
+                                 indexing='ij')
 
         return self._grid
 
@@ -548,18 +395,54 @@ class JetModel:
     def fill_factor(self):
         """
         Calculate the fraction of each of the grid's cells falling within the
-        jet
+        jet, or 'fill factors'
         """
         if self._ff is not None:
             return self._ff
 
-        # Set up coordinate grid in x, y, z for grid's 1st octant only due to
-        # assumption of reflective symmetry about x, y and z axes
-        # xx, yy, zz = [_[int(self.nx / 2):,
-        #               :,#int(self.ny / 2):,
-        #               int(self.nz / 2):] for _ in self.grid]
-        xx, yy, zz = self.grid
-        nvoxels = self.nx * self.ny * self.nz
+        # Establish reflective symmetries present, if any, to reduce
+        # computation time by reflection of coordinates/ffs/areas about
+        # relevant axes
+        refl_sym_x = False  # Reflective symmetry about x-axis?
+        refl_sym_y = False  # Reflective symmetry about y-axis?
+        refl_sym_z = False  # Reflective symmetry about z-axis?
+        refl_axes = []  # List holding reflected axes for use with numpy arrays
+
+        if self.params["geometry"]["inc"] == 90.:
+            if self.params["geometry"]["pa"] == 0.:
+                refl_sym_x = refl_sym_y = refl_sym_z = True
+                refl_axes = [0, 1, 2]
+            else:
+                refl_sym_y = True
+                refl_axes = [1]
+        else:
+            if self.params["geometry"]["pa"] == 0.:
+                refl_sym_x = True
+                refl_axes = [0]
+
+        # Set up coordinate grids in x, y, z based upon axial reflective
+        # symmetries present given the provided inclination and postion angle
+        if True in (refl_sym_x, refl_sym_y, refl_sym_z):
+            if False not in (refl_sym_x, refl_sym_y, refl_sym_z):
+                xx, yy, zz = [_[int(self.nx / 2):,
+                                int(self.ny / 2):,
+                                int(self.nz / 2):] for _ in self.grid]
+            else:
+                if refl_sym_x is True:
+                    xx, yy, zz = [_[int(self.nx / 2):, :, :] for _ in self.grid]
+                elif refl_sym_y is True:
+                    xx, yy, zz = [_[:, int(self.ny / 2):, :] for _ in self.grid]
+                else:
+                    err_msg = u"Grid symmetry not understood for i = {:.0f}"\
+                              u"\u00B0 and \u03B8={:.0f}\u00B0"
+                    err_msg = err_msg.format(self.params["geometry"]["inc"],
+                                             self.params["geometry"]["pa"])
+                    raise ValueError(err_msg)
+
+        else:
+            xx, yy, zz = self.grid
+
+        nvoxels = np.prod(np.shape(xx))
 
         if self.log:
             self._log.add_entry(mtype="INFO",
@@ -584,7 +467,7 @@ class JetModel:
         count = 0
         progress = -1
         then = time.time()
-        diag = np.sqrt(cs**2 * 3.)
+        diag = np.sqrt(cs ** 2. * 3.)  # Diagonal dimensions of cells
 
         for idxy, yplane in enumerate(zz):
             for idxx, xrow in enumerate(yplane):
@@ -593,41 +476,37 @@ class JetModel:
                     x, y = xx[idxy][idxx][idxz], yy[idxy][idxx][idxz]
 
                     # Skip if definitely outside jet boundary
-                    r, w = mgeom.xyz_to_rw(x + cs / 2., y + cs / 2.,
-                                           z + cs / 2., inc, pa)
+                    r, w, phi = mgeom.xyz_to_rwp(x + cs / 2., y + cs / 2.,
+                                                 z + cs / 2., inc, pa)
                     wr = mgeom.w_r(np.abs(r), w_0, mod_r_0, r_0, eps)
-                    if w - diag > wr:
+
+                    # Does the cell definitely lie outside of the jet
+                    # boundary? Yes if w-coordinate is more than the cells'
+                    # full diagonal dimension away from the jet's width at
+                    # the cells' r-coordinate
+                    if w - 0.5 * diag > wr:
                         continue
 
-                    verts = ((x, y, z), (x + cs, y, z),
-                             (x, y + cs, z), (x + cs, y + cs, z),
-                             (x, y, z + cs), (x + cs, y, z + cs),
-                             (x, y + cs, z + cs),
-                             (x + cs, y + cs, z + cs))
+                    verts = np.array([(x, y, z), (x + cs, y, z),
+                                      (x, y + cs, z), (x + cs, y + cs, z),
+                                      (x, y, z + cs), (x + cs, y, z + cs),
+                                      (x, y + cs, z + cs),
+                                      (x + cs, y + cs, z + cs)])
 
-                    # Apply inclination to grid cells vertices' coordinates
-                    # verts = incrot.apply(verts)
-                    # verts = tuple([tuple(_) for _ in verts])
+                    r, w, phi = mgeom.xyz_to_rwp(verts[::,0], verts[::,1],
+                                                 verts[::,2], inc, pa)
+                    wr = mgeom.w_r(np.abs(r), w_0, mod_r_0, r_0, eps)
+                    verts_inside = (w <= wr) & (np.abs(r) >= r_0)
 
-                    verts_inside = []
-                    for vert in verts:
-                        r, w = mgeom.xyz_to_rw(vert[0], vert[1], vert[2], inc,
-                                               pa)
-                        wr = mgeom.w_r(np.abs(r), w_0, mod_r_0, r_0, eps)
-                        if w <= wr:
-                            verts_inside.append(True)
-                        else:
-                            verts_inside.append(False)
-
-                    if sum(verts_inside) == 0:
+                    if np.sum(verts_inside) == 0:
                         continue
-                    elif sum(verts_inside) == 8:
+                    elif np.sum(verts_inside) == 8:
                         ff = 1.
                         area = 1.
                     else:
                         # Take average values for fill factor/projected areas
                         ff = 0.5
-                        area = 0.5
+                        area = 1.0
 
                         # TODO: Cells at base of jet need to accommodate for
                         #  r_0 properly. Value of 0.5 for ff and area will
@@ -637,7 +516,7 @@ class JetModel:
                     areas[idxy][idxx][idxz] = area
 
                 # Progress bar
-                new_progress = int(count / nvoxels * 100)  # 
+                new_progress = int(count / nvoxels * 100)  #
                 if new_progress > progress:
                     progress = new_progress
                     pblen = get_terminal_size().columns - 1
@@ -666,9 +545,9 @@ class JetModel:
                                 time.gmtime(now - then)))
 
         # Reflect in x, y and z axes
-        # for ax in (0, 2):
-        #     ffs = np.append(np.flip(ffs, axis=ax), ffs, axis=ax)
-        #     areas = np.append(np.flip(areas, axis=ax), areas, axis=ax)
+        for ax in refl_axes:
+            ffs = np.append(np.flip(ffs, axis=ax), ffs, axis=ax)
+            areas = np.append(np.flip(areas, axis=ax), areas, axis=ax)
 
         # Included as there are some, presumed floating point errors giving
         # fill factors of ~1e-15 on occasion
@@ -688,13 +567,13 @@ class JetModel:
     def areas(self):
         """
         Areas of jet-filled portion of cells as projected on to the y-axis
-        (hopefully, custom orientations will address this so area is as 
+        (hopefully, custom orientations will address this so area is as
         projected on to a surface whose normal points to the observer)
         """
         if "_areas" in self.__dict__.keys() and self._areas is not None:
             return self._areas
         else:
-            self.fill_factor  # Areas calculated as part of fill factors
+            _ = self.fill_factor  # Areas calculated as part of fill factors
 
         return self._areas
 
@@ -706,7 +585,10 @@ class JetModel:
         ps = {'params': self._params,
               'areas': None if self._areas is None else self.areas,
               'ffs': None if self._ff is None else self.fill_factor,
-              'time': self.time}
+              'time': self.time, 
+              'log': self.log}
+        self.log.add_entry("INFO", "Saving physical model to "
+                                   "{}".format(filename))
         pickle.dump(ps, open(filename, "wb"))
         return None
 
@@ -763,10 +645,9 @@ class JetModel:
         """
         Chi factor (the burst factor) as a function of position.
         """
-        z = np.abs(self.grid[2] + 0.5 * self.csize)
-        z = np.abs(self.rr)
-        a = z - 0.5 * self.csize
-        b = z + 0.5 * self.csize
+        r = np.abs(self.rr)
+        a = r - 0.5 * self.csize
+        b = r + 0.5 * self.csize
 
         a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
         b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
@@ -774,32 +655,32 @@ class JetModel:
         a = np.where(a <= self.params['geometry']['r_0'],
                      self.params['geometry']['r_0'], a)
 
-        z *= con.au
+        r *= con.au
         a *= con.au
         b *= con.au
 
-        def t_z(z):
+        def t_r(r):
             """
-            Time as a function of z. Defined purely for informative purposes
+            Time as a function of r. Defined purely for informative purposes
             """
             r_0 = self.params['geometry']['r_0'] * con.au
             v_0 = self.params['properties']['v_0'] * 1000
             q_v = self.params['power_laws']['q_v']
-            return (r_0 ** q_v * z ** (1. - q_v) - r_0) / (v_0 * (1. - q_v))
+            return (r_0 ** q_v * r ** (1. - q_v) - r_0) / (v_0 * (1. - q_v))
 
-        def int_t_z(z):
+        def int_t_r(r):
             """
-            Integral of t_z defined above for use in average value finding
+            Integral of t_r defined above for use in average value finding
             """
             r_0 = self.params['geometry']['r_0'] * con.au
             v_0 = self.params['properties']['v_0'] * 1000.
             q_v = self.params['power_laws']['q_v']
-            num = r_0 ** q_v * z ** (2. - q_v) + (q_v - 2.) * r_0 * z
+            num = r_0 ** q_v * r ** (2. - q_v) + (q_v - 2.) * r_0 * r
             den = v_0 * (q_v - 2.) * (q_v - 1.)
             return num / den
 
         av_ts = 1. / (b - a)
-        av_ts *= int_t_z(b) - int_t_z(a)
+        av_ts *= int_t_r(b) - int_t_r(a)
 
         # So that times start at 0 at r_0 and to progress to current model time
         av_ts = self.time - av_ts
@@ -870,7 +751,7 @@ class JetModel:
 
         # Calculate cell volumes and slice volumes
         vcells = self.fill_factor * (self.csize * con.au)**3.
-        vslices = np.nansum(np.nansum(vcells, axis=0), axis=0)
+        vslices = np.nansum(np.nansum(vcells, axis=1), axis=1)
 
         # Calculate mass density of cells (in kg m^-3)
         mdcells = self.number_density * self.params['properties']['mu'] *\
@@ -880,7 +761,7 @@ class JetModel:
         mcells = mdcells * vcells
 
         # Sum cell masses to get slice masses
-        mslices = np.nansum(np.nansum(mcells, axis=0), axis=0)
+        mslices = np.nansum(np.nansum(mcells, axis=1), axis=1)
 
         vslices_calc /= con.au**3.
         mslices_calc /= rjpcnsts.MSOL
@@ -894,7 +775,7 @@ class JetModel:
         mratios = mslices / mslices_calc
 
         # Average z-value for each slice
-        zs = np.mean([a, b], axis=0) / con.au
+        zs = np.mean([a, b], axis=1) / con.au
         zs *= np.sign(self.zs + self.csize / 2)
 
         plt.close('all')
@@ -966,11 +847,11 @@ class JetModel:
     def rr(self):
         if self._rr is not None:
             return self._rr
-        rr, ww = mgeom.xyz_to_rw(self.grid[0] + self.csize / 2.,
-                                 self.grid[1] + self.csize / 2.,
-                                 self.grid[2] + self.csize / 2.,
-                                 self.params["geometry"]["inc"],
-                                 self.params["geometry"]["pa"])
+        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
+                                      self.grid[1] + self.csize / 2.,
+                                      self.grid[2] + self.csize / 2.,
+                                      self.params["geometry"]["inc"],
+                                      self.params["geometry"]["pa"])
         self._rr = rr
         return self._rr
 
@@ -978,13 +859,26 @@ class JetModel:
     def ww(self):
         if self._ww is not None:
             return self._ww
-        rr, ww = mgeom.xyz_to_rw(self.grid[0] + self.csize / 2.,
-                                 self.grid[1] + self.csize / 2.,
-                                 self.grid[2] + self.csize / 2.,
-                                 self.params["geometry"]["inc"],
-                                 self.params["geometry"]["pa"])
+        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
+                                      self.grid[1] + self.csize / 2.,
+                                      self.grid[2] + self.csize / 2.,
+                                      self.params["geometry"]["inc"],
+                                      self.params["geometry"]["pa"])
         self._ww = ww
         return self._ww
+
+    @property
+    def pp(self):
+        if self._pp is not None:
+            return self._pp
+        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
+                                      self.grid[1] + self.csize / 2.,
+                                      self.grid[2] + self.csize / 2.,
+                                      self.params["geometry"]["inc"],
+                                      self.params["geometry"]["pa"])
+        self._pp = pp
+        return self._pp
+
 
     @property
     def xs(self):
@@ -1003,58 +897,24 @@ class JetModel:
         if hasattr(self, '_nd'):
             return self._nd * self.chi_xyz
 
-        z = np.abs(self.grid[2] + 0.5 * self.csize)
-        z = np.abs(self.rr)
+        R_1 = self.params["target"]["R_1"] * con.au * 1e2
+        R_2 = self.params["target"]["R_2"] * con.au * 1e2
+        mod_r_0 = self.params['geometry']['mod_r_0'] * con.au * 1e2
+        r_0 = self.params['geometry']['r_0'] * con.au * 1e2
+        w_0 = self.params['geometry']['w_0'] * con.au * 1e2
+        eps = self.params["geometry"]["epsilon"]
+        cs = self.csize * con.au * 1e2
+        q_n = self.params["power_laws"]["q_n"]
+        q_nd = self.params["power_laws"]["q^d_n"]
+        n_0 = self.params["properties"]["n_0"]
 
-        a = z - 0.5 * self.csize
-        b = z + 0.5 * self.csize
+        r = np.abs(self.rr) * con.au * 1e2 + mod_r_0 - r_0
+        w = self.ww * con.au * 1e2
 
-        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
-        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
-
-        a = np.where(a <= self.params['geometry']['r_0'],
-                     self.params['geometry']['r_0'], a)
-
-        # ms = m_slice(a * con.au, b * con.au)
-        # vs = (self.fill_factor * (self.csize * con.au)**3.) / \
-        #      v_slice(a * con.au,fplot_flux b * con.au)
-        # mcells = ms * vs
-        # md = mcells / (self.fill_factor * (self.csize * con.au)**3.)
-        # nd = md / (self.params['properties']['mu'] * mphys.atomic_mass("H"))
-        #
-        # nd = np.where(self.fill_factor > 0, nd, np.NaN) * self.fill_factor
-        #
-        # # nd = self.mass / (self.fill_factor * (jm.csize * con.au)**3.)
-        # # nd /=  self.params['properties']['mu'] * mphys.atomic_mass("H")
-        # # nd /= 1e6  # m^-3 to cm^-3
-        #
-        # self.number_density = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN,
-        #                                     neginf=np.NaN) * 1e-6
-        #
-        # return self._nd * self.chi_xyz
-
-        # Method 1, i.e. via Reynolds (1986) power-law for n(r) and
-        # averaging cell number density over z-axis extent of each cell. See
-        # https://www.math24.net/average-value-function/ for math
-        def indef_integral(z):
-            num_p1 = self.params['properties']['n_0'] * \
-                     self.params["geometry"]["mod_r_0"]
-            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
-                       self.params["geometry"]["r_0"]) /
-                      (self.params["geometry"]["mod_r_0"]))
-            num_p2 = num_p2 ** (self.params["power_laws"]["q_n"] + 1.)
-            den = self.params["power_laws"]["q_n"] + 1.
-            return num_p1 * num_p2 / den
-
-        nd = indef_integral(b) - indef_integral(a)
-        nd /= b - a
-
+        nd = n_0 * (1. + mod_r_0 ** eps * w * (R_2 - R_1) /
+                    (R_1 * w_0 * r ** eps)) ** q_nd * (r / mod_r_0) ** q_n
         nd = np.where(self.fill_factor > 0, nd, np.NaN)
         nd = np.where(nd == 0, np.NaN, nd)
-
-        # nd = self.mass / (self.fill_factor * (jm.csize * con.au)**3.)
-        # nd /=  self.params['properties']['mu'] * mphys.atomic_mass("H")
-        # nd /= 1e6  # m^-3 to cm^-3
 
         self.number_density = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN,
                                             neginf=np.NaN)
@@ -1078,7 +938,7 @@ class JetModel:
     def ion_fraction(self):
         if hasattr(self, '_xi'):
             return self._xi
-        z = np.abs(self.grid[2] + 0.5 * self.csize)
+
         z = np.abs(self.rr)
         a = z - 0.5 * self.csize
         b = z + 0.5 * self.csize
@@ -1099,15 +959,6 @@ class JetModel:
             den = self.params["power_laws"]["q_x"] + 1.
             return num_p1 * num_p2 / den
 
-        # Averaging cell ionisation fraction over z-axis extent of each cell.
-        # See https://www.math24.net/average-value-function/ for math
-        # xi = self.params['properties']['x_0']
-        # xi *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-        #     "q_x"]
-        # xi *= (b ** (self.params["power_laws"]["q_x"] + 1) -
-        #        a ** (self.params["power_laws"]["q_x"] + 1))
-        # xi /= self.params["power_laws"]["q_x"] + 1
-        # xi /= b - a
         xi = indef_integral(b) - indef_integral(a)
         xi /= b - a
         xi = np.where(self.fill_factor > 0., xi, np.NaN)
@@ -1120,120 +971,342 @@ class JetModel:
     def ion_fraction(self, new_xis):
         self._xi = new_xis
 
-    # @property
-    def emission_measure(self, savefits=False):
+    def emission_measure(self, savefits: Union[bool, str] = False):
+        """
+        Emission measure as viewed along the y-axis (pc cm^-6)
+
+        Parameters
+        ----------
+        savefits : bool, str
+            False or full path to save calculated optical depths as .fits file
+
+        Returns
+        -------
+        ems : numpy.ndarray
+            Emission measures as viewed along y-axis
+        """
         ems = (self.number_density * self.ion_fraction) ** 2. * \
               (self.csize * con.au / con.parsec *
                (self.fill_factor / self.areas))
 
-        # from scipy.ndimage import rotate
-        # ems = rotate(ems, axes=(2, 0), reshape=True, order=0, prefilter=False,
-        #              angle=90. - self.params['geometry']['inc'])
-        # ems = rotate(ems, axes=(2, 1), reshape=True, order=0, prefilter=False,
-        #              angle=self.params['geometry']['pa'])
-
-        ems = np.nansum(ems, axis=0)
+        ems = np.nansum(ems, axis=1)
 
         if savefits:
             self.save_fits(ems.T, savefits, 'em')
 
         return ems
 
-    # @emission_measure.setter
-    # def emission_measure(self, new_ems):
-    #     self._em = new_ems
+    def optical_depth_rrl(self, rrl: str,
+                          freq: Union[float, Union[np.ndarray, List[float]]],
+                          lte: bool = True,
+                          savefits: Union[bool, str] = False,
+                          collapse: bool = True) -> np.array:
+        """
+        Return RRL optical depth as viewed along the y-axis
 
-    def optical_depth_ff(self, freq, savefits=False):
+        Parameters
+        ----------
+        rrl : str
+            Notation for RRL e.g. H58a, He42b etc.
+        freq : float
+            Frequency of observation (Hz).
+        lte : bool
+            Whether to assume local thermodynamic equilibrium or not. Default is
+            True
+        savefits : bool, str
+            False or full path to save calculated optical depths as .fits file
+        collapse : bool
+            Whether to sum the optical depths along the line of sight axis,
+            or return the 3-dimensional array of optical depts (default is True)
+        Returns
+        -------
+        tau_rrl : numpy.ndarray
+            RRL optical depths as viewed along y-axis (if collapse is True),
+            or the 3-dimensional array of optical depths (if collapse is False)
+        """
+        # #################### RRL Information ############################### #
+        element, rrl_n, rrl_dn = mrrl.rrl_parser(rrl)
+        rest_freq = mphys.doppler_shift(mrrl.rrl_nu_0(element, rrl_n, rrl_dn),
+                                        self.vel[1])
+
+        n_es = self.number_density * self.ion_fraction
+
+        rrl_fwhm_thermal = mrrl.deltanu_g(rest_freq, self.temperature, element)
+        fn1n2 = mrrl.f_n1n2(rrl_n, rrl_dn)
+        en = mrrl.energy_n(rrl_n, element)
+        z_atom = mphys.z_number(element)
+        rrl_fwhm_stark = mrrl.deltanu_l(n_es, rrl_n, rrl_dn)
+
+        phi_v = mrrl.phi_voigt_nu(rest_freq, rrl_fwhm_stark, rrl_fwhm_thermal)
+        # TODO: Figure this out
+        if isinstance(freq, Iterable):
+            tau_rrl = np.empty((len(freq), self.nz, self.nx))
+            for idx, nu in enumerate(freq):
+                kappa_rrl_lte = mrrl.kappa_l(nu, rrl_n, fn1n2, phi_v(nu),
+                                             n_es,
+                                             mrrl.ni_from_ne(n_es, element),
+                                             self.temperature, z_atom, en)
+                taus = kappa_rrl_lte * (self.csize * con.au * 1e2 *
+                                        (self.fill_factor / self.areas))
+                tau_rrl[idx] = np.nansum(taus, axis=1).T
+        else:
+            kappa_rrl_lte = mrrl.kappa_l(freq, rrl_n, fn1n2, phi_v(freq),
+                                         n_es, mrrl.ni_from_ne(n_es, element),
+                                         self.temperature, z_atom, en)
+            tau_rrl = kappa_rrl_lte * (self.csize * con.au * 1e2 *
+                                        (self.fill_factor / self.areas))
+
+        if not collapse:
+            return tau_rrl
+
+        if savefits:
+            self.save_fits(tau_rrl, savefits, 'tau', freq)
+
+        return np.nansum(tau_rrl, axis=1).T
+
+    def intensity_rrl(self, rrl: str,
+                      freq: Union[float, Union[np.ndarray, List[float]]],
+                      lte: bool = True,
+                      savefits: Union[bool, str] = False) -> np.ndarray:
+        """
+        Radio intensity as viewed along x-axis (in W m^-2 Hz^-1 sr^-1)
+
+        Parameters
+        ----------
+        rrl : str
+            Notation for RRL e.g. H58a, He42b etc.
+        freq : float
+            Frequency of observation (Hz).
+        lte : bool
+            Whether to assume local thermodynamic equilibrium or not. Default is
+            True
+        savefits : bool, str
+            False or full path to save calculated optical depths as .fits file
+        Returns
+        -------
+        i_rrl : numpy.ndarray
+            RRL intensities as viewed along y-axis
+        """
+        av_temp = np.nanmean(np.where(self.temperature > 0.,
+                                      self.temperature, np.NaN), axis=1)
+
+
+        tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, savefits=False)
+        tau_ff = self.optical_depth_ff(freq, collapse=True)
+
+        i_rrl_lte = mrrl.line_intensity_lte(freq, av_temp, tau_ff, tau_rrl.T)
+
+        if savefits:
+            self.save_fits(i_rrl_lte, savefits, 'intensity', freq)
+
+        return i_rrl_lte.T
+
+    def flux_rrl(self, rrl: str,
+                 freq: Union[float, Union[np.ndarray, List[float]]],
+                 lte: bool = True, contsub: bool = True,
+                 savefits: Union[bool, str] = False):
+        """
+        Return RRL flux (in Jy). Note these are the continuum-subtracted fluxes
+
+        Parameters
+        ----------
+        rrl : str
+            Notation for RRL e.g. H58a, He42b etc.
+        freq : float, np.ndarray, list
+            Frequency of observation (Hz).
+        lte : bool
+            Whether to assume local thermodynamic equilibrium or not. Default is
+            True
+        contsub : bool
+            Whether to return the continuum subtracted fluxes or not (default is
+            True)
+        savefits : bool, str
+            False or full path to save calculated optical depths as .fits file
+
+        Returns
+        -------
+        flux_rrl : numpy.ndarray
+            RRL fluxes as viewed along y-axis.
+        """
+        if isinstance(freq, Iterable):
+            fluxes = np.empty((len(freq), self.nz, self.nx))
+            for idx, nu in enumerate(freq):
+                i_rrl = self.intensity_rrl(rrl, nu, lte=lte, savefits=False)
+                flux = i_rrl * np.arctan((self.csize * con.au) /
+                                         (self.params["target"]["dist"] *
+                                          con.parsec)) ** 2. / 1e-26
+                if not contsub:
+                    flux += self.flux_ff(nu).T
+                fluxes[idx] = flux
+
+        else:
+            i_rrl = self.intensity_rrl(rrl, freq, savefits=False)
+            fluxes = i_rrl * np.arctan((self.csize * con.au) /
+                                       (self.params["target"]["dist"] *
+                                        con.parsec)) ** 2. / 1e-26
+            if not contsub:
+                fluxes += self.flux_ff(freq)
+            fluxes = fluxes.T
+
+        if savefits:
+            self.save_fits(fluxes, savefits, 'flux', freq)
+
+        return fluxes
+
+    def optical_depth_ff(self,
+                         freq: Union[float, Union[np.ndarray, List[float]]],
+                         savefits: Union[bool, str] = False,
+                         collapse: bool = True) -> np.ndarray:
         """
         Return free-free optical depth as viewed along the y-axis
 
         Parameters
         ----------
-        freq : float
+        freq : float, np.ndarray, list
             Frequency of observation (Hz).
         savefits : bool, str
             False or full path to save calculated optical depths as .fits file
-
+        collapse : bool
+            Whether to sum the optical depths along the line of sight axis,
+            or return the 3-dimensional array of optical depts (default is True)
         Returns
         -------
         tau_ff : numpy.ndarray
             Optical depths as viewed along y-axis.
 
         """
-        # Gaunt factors of van Hoof et al. (2014). Use if constant temperature
-        # as computation via this method across a grid takes too long
-        if self.params['power_laws']['q_T'] == 0.875:
-            gff = mphys.gff(freq, self.params['properties']['T_0'])
-
-        # Equation 1 of Reynolds (1986) otherwise as an approximation
-        else:
-            gff = 11.95 * self.temperature ** 0.15 * freq ** -0.1
+        n_es = self.number_density * self.ion_fraction
 
         # Equation 1.26 and 5.19b of Rybicki and Lightman (cgs). Averaged
         # path length through voxel is volume / projected area
-        tff = 0.018 * self.temperature ** -1.5 * freq ** -2. * \
-              (self.number_density * self.ion_fraction) ** 2. * \
-              (self.csize * con.au * 1e2 * \
-               (self.fill_factor / self.areas)) * gff
+        if isinstance(freq, Iterable):
+            tff = np.empty((np.shape(freq)[0], self.nz, self.nx))
+            for idx, nu in enumerate(freq):
+                # Gaunt factors of van Hoof et al. (2014). Use if constant
+                # temperature as computation via this method across a grid
+                # takes too long Free-free Gaunt factors
+                if self.params['power_laws']['q_T'] == 0.:
+                    gff = mphys.gff(nu, self.params['properties']['T_0'])
 
-        # from scipy.ndimage import rotate
-        # tff = rotate(tff, axes=(2, 0), reshape=True, order=0, prefilter=False,
-        #              angle=90. - self.params['geometry']['inc'])
-        # tff = rotate(tff, axes=(2, 1), reshape=True, order=0, prefilter=False,
-        #              angle=self.params['geometry']['pa'])
+                # Equation 1 of Reynolds (1986) otherwise as an approximation
+                else:
+                    gff = 11.95 * self.temperature ** 0.15 * nu ** -0.1
+                tau = 0.018 * self.temperature ** -1.5 * nu ** -2. * \
+                      n_es ** 2. * (self.csize * con.au * 1e2 *
+                                    (self.fill_factor / self.areas)) * gff
+                tff[idx] = np.nansum(tau, axis=1).T
 
-        tau_ff = np.nansum(tff, axis=0)
+        else:
+            # Gaunt factors of van Hoof et al. (2014). Use if constant temperature
+            # as computation via this method across a grid takes too long
+            # Free-free Gaunt factors
+            if self.params['power_laws']['q_T'] == 0.:
+                gff = mphys.gff(freq, self.params['properties']['T_0'])
+
+            # Equation 1 of Reynolds (1986) otherwise as an approximation
+            else:
+                gff = 11.95 * self.temperature ** 0.15 * freq ** -0.1
+            tff = 0.018 * self.temperature ** -1.5 * freq ** -2. * \
+                  n_es ** 2. * (self.csize * con.au * 1e2 * \
+                  (self.fill_factor / self.areas)) * gff
+
+        if not collapse:
+            return tff
+
+        if not isinstance(freq, Iterable):
+            tff = np.nansum(tff, axis=1).T
 
         if savefits:
-            self.save_fits(tau_ff.T, savefits, 'tau', freq)
+            self.save_fits(tff, savefits, 'tau', freq)
 
-        return tau_ff
+        return tff.T
 
-    def intensity_ff(self, freq, savefits=False):
+    def intensity_ff(self, freq: Union[float, Union[np.ndarray, List[float]]],
+                     savefits: Union[bool, str] = False):
         """
-        Radio intensity as viewed along x-axis (in W m^-2 Hz^-1 sr^-1)
-        """
-        # Rotation doesn't really belong here
-        # from scipy.ndimage import rotate
-        # ts = rotate(self.temperature, axes=(2, 0), reshape=True, order=0,
-        #             prefilter=False,
-        #             angle=90. - self.params['geometry']['inc'])
-        # ts = rotate(ts, axes=(2, 1), reshape=True, order=0, prefilter=False,
-        #             angle=self.params['geometry']['pa'])
+        Radio intensity as viewed along y-axis (in W m^-2 Hz^-1 sr^-1)
 
+        Parameters
+        ----------
+        freq : float, np.ndarray, list
+            Frequency of observation (Hz).
+        savefits : bool, str
+            False or full path to save calculated optical depths as .fits file
+
+        Returns
+        -------
+        ints_ff : numpy.ndarray
+            Optical depths as viewed along y-axis.
+        """
         ts = self.temperature
-        T_b = np.nanmean(np.where(ts > 0., ts, np.NaN), axis=0) * \
-              (1. - np.exp(-self.optical_depth_ff(freq)))
 
-        ints = 2. * freq ** 2. * con.k * T_b / con.c ** 2.
+        if isinstance(freq, Iterable):
+            ints_ff = np.empty((len(freq), self.nz, self.nx))
+            for idx, nu in enumerate(freq):
+                T_b = np.nanmean(np.where(ts > 0., ts, np.NaN), axis=1) * \
+                      (1. - np.exp(-self.optical_depth_ff(nu)))
+
+                iff = 2. * nu ** 2. * con.k * T_b / con.c ** 2.
+                ints_ff[idx] = iff.T
+        else:
+            T_b = np.nanmean(np.where(ts > 0., ts, np.NaN), axis=1) * \
+                  (1. - np.exp(-self.optical_depth_ff(freq)))
+
+            ints_ff = 2. * freq ** 2. * con.k * T_b / con.c ** 2.
+            ints_ff = ints_ff.T
 
         if savefits:
-            self.save_fits(ints.T, savefits, 'intensity', freq)
+            self.save_fits(ints_ff, savefits, 'intensity', freq)
 
-        return ints
+        return ints_ff.T
 
-    def flux_ff(self, freq, savefits=False):
+    def flux_ff(self, freq: Union[float, Union[np.ndarray, List[float]]],
+                savefits: Union[bool, str] = False):
         """
         Return flux (in Jy)
+
+        Parameters
+        ----------
+        freq : float, np.ndarray, list
+            Frequency of observation (Hz).
+        savefits : bool, str
+            False or full path to save calculated optical depths as .fits file
+
+        Returns
+        -------
+        flux_ff : numpy.ndarray
+            Fluxes as viewed along y-axis.
         """
-        ints = self.intensity_ff(freq)
-        fluxes = ints * np.arctan((self.csize * con.au) /
-                                  (self.params["target"]["dist"] *
-                                   con.parsec)) ** 2. / 1e-26
+        if isinstance(freq, Iterable):
+            fluxes = np.empty((len(freq), self.nz, self.nx))
+            for idx, nu in enumerate(freq):
+                ints = self.intensity_ff(nu)
+                fs = ints * np.arctan((self.csize * con.au) /
+                                      (self.params["target"]["dist"] *
+                                       con.parsec)) ** 2. / 1e-26
+                fluxes[idx] = fs.T
+
+        else:
+            ints = self.intensity_ff(freq)
+            fluxes = ints * np.arctan((self.csize * con.au) /
+                                      (self.params["target"]["dist"] *
+                                       con.parsec)) ** 2. / 1e-26
+            fluxes = fluxes.T
 
         if savefits:
-            self.save_fits(fluxes.T, savefits, 'flux', freq)
+            self.save_fits(fluxes, savefits, 'flux', freq)
 
-        return fluxes
+        return fluxes.T
 
-    def save_fits(self, data, filename, image_type, freq=None):
+    def save_fits(self, data: np.ndarray, filename: str, image_type: str,
+                  freq: Union[float, list, np.ndarray, None] = None):
         """
         Save .fits file of input data
 
         Parameters
         ----------
         data : numpy.array
-            2-D numpy array of image data.
+            2-D/3-D numpy array of image data.
         filename: str
             Full path to save .fits image to
         image_type : str
@@ -1245,6 +1318,10 @@ class JetModel:
         -------
         None.
 
+        Raises
+        ------
+        ValueError
+            If image_type is not 'flux', 'tau', or 'em'
         """
         if image_type not in ('flux', 'tau', 'em', 'intensity'):
             raise ValueError("arg image_type must be one of 'flux', 'tau' or "
@@ -1257,6 +1334,8 @@ class JetModel:
         csize_deg = np.degrees(np.arctan(self.csize * con.au /
                                          (self.params['target']['dist'] *
                                           con.parsec)))
+
+        ndims = len(np.shape(data))
 
         hdu = fits.PrimaryHDU(np.array([data]))
         hdul = fits.HDUList([hdu])
@@ -1284,12 +1363,27 @@ class JetModel:
         hdr.comments['CDELT2'] = 'Pixel size in DEC (deg)'
 
         if image_type in ('flux', 'tau', 'intensity'):
-            hdr['CDELT3'] = 1.
-            hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
-            hdr['CRPIX3'] = 0.5
-            hdr.comments['CRPIX3'] = 'Reference frequency (channel number)'
-            hdr['CRVAL3'] = freq
-            hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
+            if ndims  == 3:
+                nchan = len(freq)
+                if nchan != 1:
+                    chan_width = freq[1] - freq[0]
+                else:
+                    chan_width = 1.
+                hdr['CTYPE3'] = 'FREQ'
+                hdr.comments['CTYPE3'] = 'Spectral axis (frequency)'
+                hdr['CRPIX3'] = nchan / 2. + 0.5
+                hdr.comments['CRPIX3'] = 'Reference frequency (channel number)'
+                hdr['CRVAL3'] = freq[len(freq) // 2 - 1] + chan_width / 2
+                hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
+                hdr['CDELT3'] = chan_width
+                hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
+            else:
+                hdr['CDELT3'] = 1.
+                hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
+                hdr['CRPIX3'] = 0.5
+                hdr.comments['CRPIX3'] = 'Reference frequency (channel number)'
+                hdr['CRVAL3'] = freq[0]
+                hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
 
         if image_type == 'flux':
             hdr['BUNIT'] = 'Jy pixel^-1'
@@ -1339,18 +1433,6 @@ class JetModel:
         ts = indef_integral(b) - indef_integral(a)
         ts /= b - a
         ts = np.where(self.fill_factor > 0., ts, np.NaN)
-
-        # Averaging cell temperature over z-axis extent of each cell. See
-        # https://www.math24.net/average-value-function/ for math
-        # ts = self.params['properties']['T_0']
-        # ts *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-        #     "q_T"]
-        # ts *= (b ** (self.params["power_laws"]["q_T"] + 1) -
-        #        a ** (self.params["power_laws"]["q_T"] + 1))
-        # ts /= self.params["power_laws"]["q_T"] + 1
-        # ts /= b - a
-        #
-        # ts = np.where(self.fill_factor > 0., ts, np.NaN)
         self.temperature = ts
 
         return self._t
@@ -1376,56 +1458,45 @@ class JetModel:
 
         x = self.grid[0] + 0.5 * self.csize
         y = self.grid[1] + 0.5 * self.csize
-        z = np.abs(self.grid[2] + 0.5 * self.csize)
+        z = self.grid[2] + 0.5 * self.csize
+        r = np.abs(self.rr)
 
-        r = np.sqrt(x ** 2. + y ** 2.)
+        r_effs = mgeom.r_eff(self.ww, self.params['target']['R_1'],
+                             self.params['target']['R_2'],
+                             self.params["geometry"]["w_0"],
+                             r, self.params["geometry"]["mod_r_0"],
+                             self.params["geometry"]["r_0"],
+                             self.params["geometry"]["epsilon"])
 
-        w_0 = self.params['geometry']['w_0']
         r_0 = self.params['geometry']['r_0']
-        eps = self.params['geometry']['epsilon']
-        m1 = self.params['target']['m_star'] * 1.98847e30  # kg    
+        m1 = self.params['target']['M_star'] * 1.98847e30  # kg
 
-        a = z - 0.5 * self.csize
-        b = z + 0.5 * self.csize
+        a = r - 0.5 * self.csize
+        b = r + 0.5 * self.csize
 
         a = np.where(b <= r_0, np.NaN, a)
         b = np.where(b <= r_0, np.NaN, b)
 
         a = np.where(a <= r_0, r_0, a)
 
-        def indef_integral(z):
+        def indef_integral(r):
             num_p1 = self.params['properties']['v_0'] * \
                      self.params["geometry"]["mod_r_0"]
-            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
+            num_p2 = ((r + self.params["geometry"]["mod_r_0"] -
                        self.params["geometry"]["r_0"]) /
                       (self.params["geometry"]["mod_r_0"]))
             num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
             den = self.params["power_laws"]["q_v"] + 1.
             return num_p1 * num_p2 / den
 
-        # xi /= b - a
         vz = indef_integral(b) - indef_integral(a)
         vz /= b - a
         vz = np.where(self.fill_factor > 0., vz, np.NaN)
 
-        # Averaging cell z-velocity over z-axis extent of each cell. See
-        # https://www.math24.net/average-value-function/ for math
-        # vz = self.params['properties']['v_0']
-        # vz *= self.params['geometry']['r_0'] ** -self.params["power_laws"][
-        #     "q_v"]
-        # vz *= (b ** (self.params["power_laws"]["q_v"] + 1) -
-        #        a ** (self.params["power_laws"]["q_v"] + 1))
-        # vz /= self.params["power_laws"]["q_v"] + 1
-        # vz /= b - a
-
         # Effective radius of (x, y) point in jet stream i.e. from what radius
         # in the disc the material was launched
-        r_eff = (r_0 ** eps * (self.params['target']['r_2'] -
-                               self.params['target']['r_1']) * r / \
-                 (w_0 * z ** eps)) + self.params['target']['r_1']
-
-        vx = np.sqrt(con.G * m1 / (r_eff * con.au)) * np.sin(np.arctan2(y, x))
-        vy = np.sqrt(con.G * m1 / (r_eff * con.au)) * np.cos(np.arctan2(y, x))
+        vx = np.sqrt(con.G * m1 / (r_effs * con.au)) * np.sin(self.pp)
+        vy = np.sqrt(con.G * m1 / (r_effs * con.au)) * np.cos(self.pp)
 
         vx /= 1e3  # km/s
         vy /= 1e3  # km/s
@@ -1433,10 +1504,34 @@ class JetModel:
         # vx = -vx here because velocities appear flipped in checks
         vx = -np.where(self.fill_factor > 0., vx, np.NaN)
         vy = np.where(self.fill_factor > 0., vy, np.NaN)
-        vz = np.where(self.grid[2] > 0, vz, -vz)
+        vz = np.where(self.rr > 0, vz, -vz)
         vz = np.where(self.fill_factor > 0., vz, np.NaN)
 
-        self.vel = (vx, vy, vz)
+        i = np.radians(90. - self.params["geometry"]["inc"])
+        pa = np.radians(self.params["geometry"]["pa"])
+
+        # Set up rotation matrices in inclination and position angle,
+        # respectively
+        rot_x = np.array([[1., 0., 0.],
+                          [0., np.cos(-i), -np.sin(-i)],
+                          [0., np.sin(-i), np.cos(-i)]])
+        rot_y = np.array([[np.cos(pa), 0., np.sin(pa)],
+                          [0., 1., 0.],
+                          [-np.sin(pa), 0., np.cos(pa)]])
+
+        vxs = np.empty(np.shape(x))
+        vys = np.empty(np.shape(x))
+        vzs = np.empty(np.shape(x))
+        vs = np.stack([vx, vy, vz], axis=3)
+        for idxx, plane in enumerate(vs):
+            for idxy, column in enumerate(plane):
+                for idxz, v in enumerate(column):
+                    x, y, z = rot_x.dot(rot_y.dot(v))
+                    vxs[idxx][idxy][idxz] = x
+                    vys[idxx][idxy][idxz] = y
+                    vzs[idxx][idxy][idxz] = z
+
+        self.vel = (vxs, vys, vzs)
 
         return self._v
 
@@ -1476,7 +1571,7 @@ class JetModel:
     def name(self):
         return self._name
 
-    def model_plot(self, savefig=False):
+    def model_plot(self, savefig: bool = False):
         """
         Generate 4 subplots of (from top left, clockwise) number density,
         temperature, ionisation fraction and velocity.
@@ -1543,11 +1638,11 @@ class JetModel:
         bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
         aspect = bbox.width / bbox.height
 
-        im_nd = tl_ax.imshow(self.number_density[self.ny // 2].T,
+        im_nd = tl_ax.imshow(self.number_density[:, self.ny // 2, :].T,
                              norm=LogNorm(vmin=np.nanmin(self.number_density),
                                           vmax=np.nanmax(self.number_density)),
-                             extent=(np.min(self.grid[1]),
-                                     np.max(self.grid[1]) + self.csize * 1.,
+                             extent=(np.min(self.grid[0]),
+                                     np.max(self.grid[0]) + self.csize * 1.,
                                      np.min(self.grid[2]),
                                      np.max(self.grid[2]) + self.csize * 1.),
                              cmap='viridis_r', aspect="equal")
@@ -1557,12 +1652,12 @@ class JetModel:
                             position='right', orientation='vertical',
                             numlevels=50, colmap='viridis_r', norm=im_nd.norm)
 
-        im_T = tr_ax.imshow(self.temperature[self.ny // 2].T,
+        im_T = tr_ax.imshow(self.temperature[:, self.ny // 2, :].T,
                             norm=LogNorm(vmin=100.,
                                          vmax=max([1e4, np.nanmax(
                                              self.temperature)])),
-                            extent=(np.min(self.grid[1]),
-                                    np.max(self.grid[1]) + self.csize * 1.,
+                            extent=(np.min(self.grid[0]),
+                                    np.max(self.grid[0]) + self.csize * 1.,
                                     np.min(self.grid[2]),
                                     np.max(self.grid[2]) + self.csize * 1.),
                             cmap='plasma', aspect="equal")
@@ -1573,10 +1668,10 @@ class JetModel:
                             colmap='plasma', norm=im_T.norm)
         tr_cax.set_ylim(100., 1e4)
 
-        im_xi = bl_ax.imshow(self.ion_fraction[self.ny // 2].T * 100., vmin=0.,
-                             vmax=100.0,
-                             extent=(np.min(self.grid[1]),
-                                     np.max(self.grid[1]) + self.csize * 1.,
+        im_xi = bl_ax.imshow(self.ion_fraction[:, self.ny // 2, :].T * 100.,
+                             vmin=0., vmax=100.0,
+                             extent=(np.min(self.grid[0]),
+                                     np.max(self.grid[0]) + self.csize * 1.,
                                      np.min(self.grid[2]),
                                      np.max(self.grid[2]) + self.csize * 1.),
                              cmap='gnuplot', aspect="equal")
@@ -1586,11 +1681,11 @@ class JetModel:
                             colmap='gnuplot', norm=im_xi.norm)
         bl_cax.set_yticks(np.linspace(0., 100., 6))
 
-        im_vs = br_ax.imshow(self.vel[1][self.ny // 2].T,
+        im_vs = br_ax.imshow(self.vel[1][:, self.ny // 2, :].T,
                              vmin=np.nanmin(self.vel[1]),
                              vmax=np.nanmax(self.vel[1]),
-                             extent=(np.min(self.grid[1]),
-                                     np.max(self.grid[1]) + self.csize * 1.,
+                             extent=(np.min(self.grid[0]),
+                                     np.max(self.grid[0]) + self.csize * 1.,
                                      np.min(self.grid[2]),
                                      np.max(self.grid[2]) + self.csize * 1.),
                              cmap='coolwarm', aspect="equal")
@@ -1602,9 +1697,9 @@ class JetModel:
 
         dx = int((np.ptp(br_ax.get_xlim()) / self.csize) // 2 * 2 // 20)
         dz = self.nz // 10
-        vzs = self.vel[2][self.ny // 2][::dx, ::dz].flatten()
-        xs = self.grid[0][self.ny // 2][::dx, ::dz].flatten()[~np.isnan(vzs)]
-        zs = self.grid[2][self.ny // 2][::dx, ::dz].flatten()[~np.isnan(vzs)]
+        vzs = self.vel[2][::dx, self.ny // 2, ::dz].flatten()
+        xs = self.grid[0][::dx, self.ny // 2, ::dz].flatten()[~np.isnan(vzs)]
+        zs = self.grid[2][::dx, self.ny // 2, ::dz].flatten()[~np.isnan(vzs)]
         vzs = vzs[~np.isnan(vzs)]
         cs = br_ax.transAxes.transform((0.15, 0.5))
         cs = br_ax.transData.inverted().transform(cs)
@@ -1667,20 +1762,23 @@ class JetModel:
             cax.minorticks_on()
 
         if savefig:
+            self.log.add_entry("INFO",
+                               "Model plot saved to " + savefig)
             plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
         return None
 
-    def radio_plot(self, freq, percentile=5., savefig=False):
+    def radio_plot(self, freq: float, percentile: float = 5.,
+                   savefig: bool = False):
         """
         Generate 3 subplots of (from left to right) flux, optical depth and
         emission measure.
-        
+
         Parameters
         ----------
         freq : float,
             Frequency to produce images at.
-            
+
         percentile : float,
             Percentile of pixels to exclude from colorscale. Implemented as
             some edge pixels have extremely low values. Supplied value must be
@@ -1824,11 +1922,13 @@ class JetModel:
             cax.minorticks_on()
 
         if savefig:
+            self.log.add_entry("INFO",
+                               "Radio plot saved to " + savefig)
             plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
         return None
 
-    def jml_profile_plot(self, ax=None, savefig=False):
+    def jml_profile_plot(self, ax=None, savefig: bool = False):
         """
         Plot ejection profile using matlplotlib5
 
@@ -1873,7 +1973,209 @@ class JetModel:
         return None
 
 
-class ModelRun:
+class ContinuumRun:
+    def __init__(self, dcy: str, year: float,
+                 freq: Union[float, None] = None,
+                 bandwidth: Union[float, None] = None,
+                 chanwidth: Union[float, None] = None,
+                 t_obs: Union[float, None] = None,
+                 t_int: Union[float, None] = None,
+                 tscop: Union[Tuple[str, str], None] = None):
+
+        # Protected, 'immutable' attributes
+        self._year = year
+        self._dcy = dcy
+        self._obs_type = 'continuum'
+        self._freq = freq
+        self._t_obs = t_obs
+        self._t_int = t_int
+        self._tscop = tscop
+        self._products = {}
+        self._results = {}
+
+        # Default bandwidth/channel-width values to 1 Hz if not given
+        if bandwidth is not None:
+            self._bandwidth = bandwidth
+        else:
+            self._bandwidth = 1.
+
+        if chanwidth is not None:
+            self._chanwidth = chanwidth
+        else:
+            self._chanwidth = 1.
+
+        # Public, 'mutable' attributes
+        self.completed = False
+        self.radiative_transfer = True
+        self.simobserve = True
+
+        if freq is None:
+            self.radiative_transfer = False
+
+        for val in (tscop, bandwidth, chanwidth, t_obs, t_int):
+            if val is None:
+                self.simobserve = False
+
+    #def __str__(self):
+
+
+    @property
+    def results(self):
+        """Quantitative results gleaned from products"""
+        return self._results
+
+    @results.setter
+    def results(self, new_results):
+        if not isinstance(new_results, dict):
+            raise TypeError("setter method for results attribute requires dict")
+        self._results = new_results
+
+    @results.deleter
+    def results(self):
+        del self._results
+
+    @property
+    def products(self):
+        """Any data products resulting from the executed run"""
+        return self._products
+
+    @products.setter
+    def products(self, new_products):
+        if not isinstance(new_products, dict):
+            raise TypeError("setter method for products attribute requires "
+                            "dict")
+        self._products = new_products
+
+    @products.deleter
+    def products(self):
+        del self._products
+
+    @property
+    def obs_type(self):
+        return self._obs_type
+
+    @property
+    def dcy(self):
+        """Parent directory of the run"""
+        return self._dcy
+
+    @dcy.setter
+    def dcy(self, new_dcy):
+        self._dcy = new_dcy
+
+    @property
+    def model_dcy(self):
+        """Directory containing model files"""
+        return os.sep.join([self.dcy, f'Day{self.day}'])
+
+    @property
+    def rt_dcy(self):
+        """Directory to contain radiative transfer data products/files"""
+        if not self.radiative_transfer:
+            return None
+        else:
+            return os.sep.join([self.model_dcy, miscf.freq_str(self.freq)])
+
+    @property
+    def year(self):
+        return self._year
+
+    @property
+    def day(self):
+        return int(self.year * 365.)
+
+    @property
+    def freq(self):
+        return self._freq
+
+    @property
+    def bandwidth(self):
+        return self._bandwidth
+
+    @property
+    def chanwidth(self):
+        return self._chanwidth
+
+    @property
+    def t_obs(self):
+        return self._t_obs
+
+    @property
+    def t_int(self):
+        return self._t_int
+
+    @property
+    def tscop(self):
+        return self._tscop
+
+    @property
+    def fits_flux(self):
+        return self.rt_dcy + os.sep + '_'.join(['Flux', 'Day' + str(self.day),
+                                                miscf.freq_str(self.freq)]) +\
+               '.fits'
+
+    @property
+    def fits_tau(self):
+        return self.rt_dcy + os.sep + '_'.join(['Tau', 'Day' + str(self.day),
+                                                miscf.freq_str(self.freq)]) +\
+               '.fits'
+
+    @property
+    def fits_em(self):
+        return self.rt_dcy + os.sep + '_'.join(['EM', 'Day' + str(self.day),
+                                                miscf.freq_str(self.freq)]) +\
+               '.fits'
+
+    @property
+    def nchan(self):
+        return int(self.bandwidth / self.chanwidth)
+
+    @property
+    def chan_freqs(self):
+        chan1 = self.freq - self.bandwidth / 2. + self.chanwidth / 2.
+        return chan1 + np.arange(self.nchan) * self.chanwidth
+
+
+class RRLRun(ContinuumRun):
+    def __init__(self, dcy: str, year: float,
+                 line: Union[str, None] = None,
+                 bandwidth: Union[float, None] = None,
+                 chanwidth: Union[float, None] = None,
+                 t_obs: Union[float, None] = None,
+                 t_int: Union[float, None] = None,
+                 tscp: Union[Tuple[str, str], None] = None):
+        self.line = line
+        freq = mrrl.rrl_nu_0(*mrrl.rrl_parser(line))
+
+        super().__init__(dcy, year, freq, bandwidth, chanwidth, t_obs, t_int,
+                         tscp)
+
+        self._obs_type = 'rrl'
+
+    @property
+    def rt_dcy(self):
+        """Directory to contain radiative transfer data products/files"""
+        if not self.radiative_transfer:
+            return None
+        else:
+            return os.sep.join([self.model_dcy, self.line])
+
+    @property
+    def fits_flux(self):
+        return self.rt_dcy + os.sep + '_'.join(['Flux', 'Day' + str(self.day),
+                                                self.line]) + '.fits'
+
+    @property
+    def fits_tau(self):
+        return self.rt_dcy + os.sep + '_'.join(['Tau', 'Day' + str(self.day),
+                                                self.line]) + '.fits'
+
+    @property
+    def fits_em(self):
+        return self.rt_dcy + os.sep + '_'.join(['EM', 'Day' + str(self.day),
+                                                self.line]) + '.fits'
+
+class Pipeline:
     """
     Class to handle a creation of physical jet model, creation of .fits files
     and subsequent synthetic imaging via CASA.
@@ -1886,7 +2188,7 @@ class ModelRun:
 
         Parameters
         ----------
-        cls : ModelRun
+        cls : Pipeline
             DESCRIPTION.
         load_file : str
             Full path to saved ModelRun file (pickle file).
@@ -1900,10 +2202,7 @@ class ModelRun:
         loaded = pickle.load(open(load_file, 'rb'))
 
         for idx, run in enumerate(loaded['runs']):
-            for key in run:
-                if type(run[key]) is str:
-                    if not os.path.exists(run[key]):
-                        run[key] = run[key].replace('~', home)
+            run.dcy = run.dcy.replace('~', home)
             loaded['runs'][idx] = run
 
         loaded['model_file'] = loaded['model_file'].replace('~', home)
@@ -1912,12 +2211,12 @@ class ModelRun:
         jm = JetModel.load_model(loaded["model_file"])
         params = loaded["params"]
 
-        new_modelrun = cls(jm, params)
+        new_modelrun = cls(jm, params, log=loaded['log'])
         new_modelrun.runs = loaded["runs"]
 
         return new_modelrun
 
-    def __init__(self, jetmodel, params):
+    def __init__(self, jetmodel, params, log=None):
         """
 
         Parameters
@@ -1944,15 +2243,20 @@ class ModelRun:
                 sys.path.append(os.path.dirname(params))
 
             jp = __import__(os.path.basename(params)[:-3])
+            err = miscf.check_pline_params(jp.params)
+            if err is not None:
+                raise err
             self._params = jp.params
         else:
-            raise TypeError("Supplied arg params must be dict or str")
+            raise TypeError("Supplied arg params must be dict or full path ("
+                            "str)")
 
         self.model_dcy = self.params['dcys']['model_dcy']
         self.model_file = self.model_dcy + os.sep + "jetmodel.save"
         self.save_file = self.model_dcy + os.sep + "modelrun.save"
 
         # Create Log for ModelRun instance
+        import time
         log_name = "ModelRun_"
         log_name += time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())
         log_name += ".log"
@@ -1962,58 +2266,125 @@ class ModelRun:
         if not os.path.exists(self.dcy):
             os.mkdir(self.dcy)
             fn = os.sep.join([self.dcy, log_name])
-            self._log = logger.Log(fname=fn)
-            self._log.add_entry(mtype="INFO",
-                                entry="Creating model directory, " +
-                                      self.dcy)
+            if log is not None:
+                self._log = log
+            else:
+                self._log = logger.Log(fname=fn)
+            self.log.add_entry(mtype="INFO",
+                               entry="Creating model directory, " + self.dcy)
         else:
-            self._log = logger.Log(fname=os.sep.join([self.dcy, log_name]))
+            if log is not None:
+                self._log = log
+            else:
+                self._log = logger.Log(fname=os.sep.join([self.dcy, log_name]))
 
         self.model.log = self.log
-        self.params['times'].sort()
-        self.params['freqs'].sort()
+
+        if self.params['continuum']['times'] is not None:
+            self.params['continuum']['times'].sort()
+        else:
+            self.params['continuum']['times'] = np.array([])
+
+        if self.params['rrls']['times'] is not None:
+            self.params['rrls']['times'].sort()
+        else:
+            self.params['rrls']['times'] = np.array([])
 
         # Create directory names for all times here
-        days = ["Day" + str(int(_ * 365.)) for _ in self.params['times']]
-        freq_strs = [str(int(_ / 1e6)) + "MHz" for _ in self.params['freqs']]
-
         runs = []
-        for idx1, day in enumerate(days):
-            for idx2, freq in enumerate(freq_strs):
-                rdcy = os.sep.join([self.dcy, day, freq])
-                ff = rdcy + os.sep + '_'.join(['*', day, freq]) + '.fits'
-                runs.append({'dcy': rdcy,
-                             'fits_flux': ff.replace('*', 'Flux'),
-                             'fits_tau': ff.replace('*', 'Tau'),
-                             'fits_em': ff.replace('*', 'EM'),
-                             'time': self.params['times'][idx1],
-                             'freq': self.params['freqs'][idx2],
-                             'tscop': self.params['tscps'][idx2],
-                             't_int': int(self.params['t_ints'][idx2]),
-                             't_obs': int(self.params['t_obs'][idx2]),
-                             'bw': self.params['bws'][idx2],
-                             'nchan': int(self.params['nchans'][idx2]),
-                             'completed': False})
+
+        # Determine continuum run parameters
+        # cparams = miscf.standardise_pline_params(self.params['continuum'])
+        t_obs = self.params['continuum']['t_obs']
+        tscps = self.params['continuum']['tscps']
+        t_ints = self.params['continuum']['t_ints']
+        bws = self.params['continuum']['bws']
+        chanws = self.params['continuum']['chanws']
+        self.log.add_entry(mtype="INFO",
+                           entry="Reading in continuum runs to pipeline")
+        for idx1, time in enumerate(self.params['continuum']['times']):
+            for idx2, freq in enumerate(self.params['continuum']['freqs']):
+                run = ContinuumRun(self.dcy, time, freq,
+                                   bws[idx2] if miscf.is_iter(bws) else bws,
+                                   chanws[idx2] if miscf.is_iter(chanws) else chanws,
+                                   t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
+                                   t_ints[idx2] if miscf.is_iter(t_ints) else t_ints,
+                                   tscps[idx2] if miscf.is_iter(tscps) else tscps)
+                self.log.add_entry(mtype="INFO",
+                                   entry="Run #{} -> Details:\n{}"
+                                         "".format(len(runs) + 1,
+                                                   run.__str__()),
+                                   timestamp=False)
+                runs.append(run)
+
+        t_obs = self.params['rrls']['t_obs']
+        tscps = self.params['rrls']['tscps']
+        t_ints = self.params['rrls']['t_ints']
+        bws = self.params['rrls']['bws']
+        chanws = self.params['rrls']['chanws']
+        self.log.add_entry(mtype="INFO",
+                           entry="Reading in radio recombination line runs to "
+                                 "pipeline")
+        for idx1, time in enumerate(self.params['rrls']['times']):
+            for idx2, line in enumerate(self.params['rrls']['lines']):
+                run = RRLRun(self.dcy, time, line,
+                             bws[idx2] if miscf.is_iter(bws) else bws,
+                             chanws[idx2] if miscf.is_iter(chanws) else chanws,
+                             t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
+                             t_ints[idx2] if miscf.is_iter(t_ints) else t_ints,
+                             tscps[idx2] if miscf.is_iter(tscps) else tscps)
+                self.log.add_entry(mtype="INFO",
+                                   entry="Run #{} -> Details:\n{}"
+                                         "".format(len(runs) + 1,
+                                                   run.__str__()),
+                                   timestamp=False)
+                runs.append(run)
+
         self._runs = runs
 
-    def save(self, save_file):
+    def save(self, save_file: str, absolute_directories: bool = False):
+        """
+        Saves the pipeline state as a pickled file
+
+        Parameters
+        ----------
+        save_file: str
+            Full path for pickle to save pipeline state to
+        absolute_directories: bool
+            Save all paths as absolute (system dependent) paths? e.g. the
+            home directory prefix to a directory will be stored as '~' if set to
+            False. This allows saves to be relevant on multiple
+            systems which share a common directory strutuce through
+            file sharing, for example. Default is False.
+
+        Returns
+        -------
+        None
+        """
         home = os.path.expanduser('~')
         rs = self.runs
         for idx, run in enumerate(rs):
-            for key in run:
-                if type(run[key]) is str:
-                    run[key] = run[key].replace(home, '~')
-            rs['runs'][idx] = run
+            #for key in run:
+            if not absolute_directories:# and type(run[key]) is str:
+                rs[idx].dcy = run.dcy.replace(home, '~')
+            #rs[idx] = run
 
         ps = self._params
-        ps['dcys']['model_dcy'] = ps['dcys']['model_dcy'].replace(home, '~')
         mf = self.model_file
-        mf = mf.replace(home, '~')
+
+        if not absolute_directories:
+            ps['dcys']['model_dcy'] = ps['dcys']['model_dcy'].replace(home, '~')
+            mf = mf.replace(home, '~')
 
         p = {"runs": rs,
              "params": ps,
-             "model_file": mf}
+             "model_file": mf,
+             'log': self.log}
+
+        self.log.add_entry(mtype="INFO",
+                           entry="Saving pipeline to " + save_file)
         pickle.dump(p, open(save_file, 'wb'))
+
         return None
 
     @property
@@ -2070,6 +2441,7 @@ class ModelRun:
         -------
         Dictionary of data products from each part of the execution
         """
+        self.log.add_entry("INFO", "Beginning pipeline execution")
         if verbose != self.log.verbose:
             self.log.verbose = verbose
 
@@ -2089,6 +2461,9 @@ class ModelRun:
             ptg_txt = "#Epoch     RA          DEC      TIME(optional)\n"
             ptg_txt += "J2000 {} ".format(tgt_c.to_string('hmsdms'))
 
+            self.log.add_entry("INFO",
+                               "Creating pointings and writing to file, {}, "
+                               "for synthetic observations".format(ptgfile))
             with open(ptgfile, 'wt') as f:
                 f.write(ptg_txt)
 
@@ -2097,86 +2472,158 @@ class ModelRun:
                 self.model = JetModel.load_model(self.model_file)
 
         for idx, run in enumerate(self.runs):
-            if run["completed"] and not clobber:
+            self.log.add_entry(mtype="INFO",
+                               entry="Executing run #{} -> Details:\n{}"
+                                     "".format(idx + 1, run.__str__()))
+            if run.completed and not clobber:
+                self.log.add_entry(mtype="INFO",
+                                   entry="Run #{} previously completed, "
+                                         "skipping".format(idx + 1,),
+                                   timestamp=False)
                 continue
             try:
                 # Create relevant directories
-                if not os.path.exists(run['dcy']):
+                if not os.path.exists(run.rt_dcy):
                     self.log.add_entry(mtype="INFO",
-                                       entry="Creating directory, " +
-                                             run['dcy'])
+                                       entry="{} doesn't exist, "
+                                             "creating".format(run.rt_dcy),
+                                       timestamp=False)
                     # if not dryrun:
-                    os.makedirs(run['dcy'])
+                    os.makedirs(run.rt_dcy)
 
-                if "products" not in self.runs[idx].keys():
-                    self.runs[idx]["products"] = {}
-
-                t_str = os.path.basename(os.path.dirname(run['dcy']))
-                freq_str = os.path.basename(run['dcy'])
-
-                ff = run['dcy'] + os.sep
-                ff += '_'.join(['*', t_str, freq_str]) + '.fits'
-
-                run['fits_flux'] = ff.replace('*', 'Flux')
-
-                # Plot physical jet model if required
-                model_plot = os.sep.join([os.path.dirname(run['dcy']),
+                # Plot physical jet model, if required
+                model_plot = os.sep.join([os.path.dirname(run.rt_dcy),
                                           "ModelPlot.pdf"])
 
-                if not dryrun:
+                if not dryrun and run.radiative_transfer:
+                    self.log.add_entry(mtype="INFO",
+                                       entry="Running radiative transfer")
                     if not os.path.exists(model_plot):
                         self.model.model_plot(savefig=model_plot)
 
                     # Compute Emission measures for model plots
-                    self.model.emission_measure(savefits=run['fits_em'])
+                    if not os.path.exists(run.fits_em) or clobber:
+                        self.log.add_entry(mtype="INFO",
+                                           entry="Emission measures saved to "
+                                                 "{}".format(run.fits_em))
+                        self.model.emission_measure(savefits=run.fits_em)
+                    else:
+                        self.log.add_entry(mtype="INFO",
+                                           entry="Emission measures already "
+                                                 "exist -> {}"
+                                                 "".format(run.fits_em),
+                                           timestamp=False)
 
-                    # Run radiative transfer
-                    self.model.optical_depth_ff(run['freq'],
-                                                savefits=run['fits_tau'])
-                    flux_vals = self.model.flux_ff(run['freq'],
-                                                   savefits=run['fits_flux'])
+                    # Radiative transfer
+                    if run.obs_type == 'continuum':
+                        if not os.path.exists(run.fits_tau) or clobber:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Computing optical depths "
+                                                     "and saving to {}"
+                                                     "".format(run.fits_tau))
+                            self.model.optical_depth_ff(run.chan_freqs,
+                                                        savefits=run.fits_tau)
+                        else:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Optical depths already "
+                                                     "exist -> {}"
+                                                     "".format(run.fits_tau),
+                                               timestamp=False)
+                        if not os.path.exists(run.fits_flux) or clobber:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Calculating fluxes and "
+                                                     "saving to {}"
+                                                     "".format(run.fits_flux))
+                            fluxes = self.model.flux_ff(run.chan_freqs,
+                                                        savefits=run.fits_flux)
+                            fluxes = fluxes.T
+                        else:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Fluxes already "
+                                                     "exist -> {}"
+                                                     "".format(run.fits_flux),
+                                               timestamp=False)
+                            fluxes = fits.open(run.fits_flux)[0].data[0]
+                    else:
+                        if not os.path.exists(run.fits_tau) or clobber:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Computing optical depths "
+                                                     "and saving to {}"
+                                                     "".format(run.fits_tau))
+                            self.model.optical_depth_rrl(run.line,
+                                                         run.chan_freqs,
+                                                         savefits=run.fits_tau)
+                        else:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Optical depths already "
+                                                     "exist -> {}"
+                                                     "".format(run.fits_tau),
+                                               timestamp=False)
+                        if not os.path.exists(run.fits_flux) or clobber:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Calculating fluxes and "
+                                                     "saving to {}"
+                                                     "".format(run.fits_flux))
+                            fluxes = self.model.flux_rrl(run.line,
+                                                         run.chan_freqs,
+                                                         contsub=False,
+                                                         savefits=run.fits_flux)
+                            fluxes = fluxes.T
+                        else:
+                            self.log.add_entry(mtype="INFO",
+                                               entry="Fluxes already "
+                                                     "exist -> {}"
+                                                     "".format(run.fits_flux),
+                                               timestamp=False)
+                            fluxes = fits.open(run.fits_flux)[0].data[0]
 
-                    self.radio_plot(run, savefig=os.sep.join([run['dcy'],
-                                                              "RadioPlot.pdf"]))
-                    self.runs[idx]['flux'] = np.nansum(flux_vals)
+                    print(format(run.freq, '.1e')+'GHz ',np.shape(fluxes))
+                    if run.obs_type == 'continuum':
+                        flux = np.nansum(np.nanmean(fluxes, axis=0))
+                        self.log.add_entry(mtype="INFO",
+                                           entry="Total, average, channel flux "
+                                                 "of {:.2e}Jy "
+                                                 "calculated".format(flux))
+                    else:
+                        flux = np.nansum(np.nansum(fluxes, axis=1), axis=1)
+                    self.runs[idx].results['flux'] = flux
 
                     # Save model data if doesn't exist
                     if not os.path.exists(self.model_file):
                         self.model.save(self.model_file)
 
                     # Save pipeline state after successful run
-                    self.save(self.save_file)
+                    self.save(self.save_file, absolute_directories=True)
 
             except KeyboardInterrupt:
+                self.log.add_entry("ERROR",
+                                   "Pipeline interrupted by user. Saving run "
+                                   "state")
                 self.save(self.save_file)
                 self.model.save(self.model_file)
                 raise KeyboardInterrupt("Pipeline interrupted by user")
 
             # Run casa's simobserve and produce visibilities, followed by tclean
             # and then export the images in .fits format
-            if simobserve:
+            if simobserve and run.simobserve and not dryrun:
+                self.log.add_entry("INFO",
+                                   "Setting up synthetic observation CASA "
+                                   "script")
                 script = casa.Script()
-                os.chdir(run['dcy'])
+                os.chdir(run.rt_dcy)
 
                 # Get desired telescope name
-                tscop = run['tscop'][0]
+                tscop, t_cfg = run.tscop
 
                 # Get antennae positions file's path
-                t_cfg = run['tscop'][1]
                 ant_list = casa.observatories.cfg_files[tscop][t_cfg]
 
-                # Set frequency and bandwidth strings
-                if run['freq'] < 10e9:
-                    freq_str = '{:.0f}MHz'.format(run['freq'] / 1e6)
-
-                else:
-                    freq_str = '{:.0f}GHz'.format(run['freq'] / 1e9)
-
-                if run['bw'] < 1e9:
-                    bw_str = '{:.0f}MHz'.format(run['bw'] / 1e6)
-
-                else:
-                    bw_str = '{:.0f}GHz'.format(run['bw'] / 1e9)
+                # Set frequency (of center channel) and channel width strings by
+                # using CASA default parameter values which set the channel
+                # width and central channel frequency from the input model
+                # header
+                chanw_str = ''
+                freq_str = ''
 
                 # Get hour-angle ranges above minimum elevation
                 min_el = self.params['min_el']
@@ -2204,7 +2651,6 @@ class ModelRun:
                 # too short for desired time on target per day)
                 multiple_ms = False  # Are multiple `observational runs' rqd?
                 ew_int = False  # Is the telescope an E-W interferometer?
-                nruns = 1  # Number of `observational runs'
 
                 # Number of scans through ha-range for E-W interferometers
                 # during the final `day of observations' --> ARBITRARY
@@ -2214,11 +2660,20 @@ class ModelRun:
                 if tscop in ('ATCA', 'WSRT'):
                     ew_int = True
 
-                if ew_int or time_up < run['t_obs']:
+                if ew_int or time_up < run.t_obs:
                     multiple_ms = True
 
-                totaltimes = [time_up] * (run['t_obs'] // time_up)
-                totaltimes += [run['t_obs'] - run['t_obs'] // time_up * time_up]
+                totaltimes = [time_up] * (run.t_obs // time_up)
+                totaltimes += [run.t_obs - run.t_obs // time_up * time_up]
+
+                self.log.add_entry("INFO",
+                                   "Target elevation range of {:+.0f} to "
+                                   "{:+.0f}deg with mininum elevation of {}deg "
+                                   "and total time on target of {:.1f}hr, means"
+                                   " splitting observations over {} run(s)"
+                                   "".format(el_range[0], el_range[1], min_el,
+                                             run.t_obs / 3600, len(totaltimes)),
+                                   timestamp=False)
 
                 # Decide 'dates of observation'
                 refdates = []
@@ -2230,6 +2685,8 @@ class ModelRun:
                 # Central hour angles for each observation
                 hourangles = ['0h'] * len(totaltimes)
 
+                # If east-west interferometer, spread scans out over range in
+                # hour angles
                 if ew_int:
                     hourangles.pop(-1)
                     final_refdate = refdates.pop(-1)
@@ -2252,12 +2709,12 @@ class ModelRun:
                 # Synthetic observations
                 for idx2, totaltime in enumerate(totaltimes):
                     so = tasks.Simobserve(project=projects[idx2],
-                                          skymodel=run['fits_flux'],
+                                          skymodel=run.fits_flux,
                                           incenter=freq_str,
-                                          inwidth=bw_str,
+                                          inwidth=chanw_str,
                                           setpointings=False,
                                           ptgfile=ptgfile,
-                                          integration=str(run['t_int']) + 's',
+                                          integration=str(run.t_int) + 's',
                                           antennalist=ant_list,
                                           refdate=refdates[idx2],
                                           hourangle=hourangles[idx2],
@@ -2268,31 +2725,35 @@ class ModelRun:
                     script.add_task(so)
 
                 # Final measurement set paths
-                fnl_clean_ms = run['dcy'] + os.sep + 'SynObs' + os.sep
+                fnl_clean_ms = run.rt_dcy + os.sep + 'SynObs' + os.sep
                 fnl_clean_ms += '.'.join(['SynObs',
-                                          os.path.basename(ant_list).strip(
+                                          os.path.basename(ant_list).rstrip(
                                               '.cfg'),
                                           'ms'])
 
-                fnl_noisy_ms = run['dcy'] + os.sep + 'SynObs' + os.sep
+                fnl_noisy_ms = run.rt_dcy + os.sep + 'SynObs' + os.sep
                 fnl_noisy_ms += '.'.join(['SynObs',
-                                          os.path.basename(ant_list).strip(
+                                          os.path.basename(ant_list).rstrip(
                                               '.cfg'),
                                           'noisy', 'ms'])
 
                 if multiple_ms:
-                    script.add_task(tasks.Mkdir(name='SynObs'))
+                    if os.path.exists(run.rt_dcy + os.sep + 'SynObs'):
+                        script.add_task(tasks.Rmdir(path=run.rt_dcy + os.sep +
+                                                         'SynObs'))
+                    script.add_task(tasks.Mkdir(name=run.rt_dcy + os.sep +
+                                                     'SynObs'))
                     clean_mss, noisy_mss = [], []
 
                     for project in projects:
-                        pdcy = run['dcy'] + os.sep + project
+                        pdcy = run.rt_dcy + os.sep + project
                         clean_ms = '.'.join([project,
                                              os.path.basename(
-                                                 ant_list).strip('.cfg'),
+                                                 ant_list).rstrip('.cfg'),
                                              'ms'])
                         noisy_ms = '.'.join([project,
                                              os.path.basename(
-                                                 ant_list).strip('.cfg'),
+                                                 ant_list).rstrip('.cfg'),
                                              'noisy', 'ms'])
                         clean_mss.append(pdcy + os.sep + clean_ms)
                         noisy_mss.append(pdcy + os.sep + noisy_ms)
@@ -2303,10 +2764,10 @@ class ModelRun:
                     script.add_task(tasks.Concat(vis=noisy_mss,
                                                  concatvis=fnl_noisy_ms))
                     for project in projects:
-                        pdcy = run['dcy'] + os.sep + project
+                        pdcy = run.rt_dcy + os.sep + project
                         script.add_task(tasks.Rmdir(path=pdcy))
 
-                script.add_task(tasks.Chdir(run['dcy'] + os.sep + 'SynObs'))
+                script.add_task(tasks.Chdir(run.rt_dcy + os.sep + 'SynObs'))
 
                 # Determine spatial resolution and hence cell size
                 ant_data = {}
@@ -2327,16 +2788,24 @@ class ModelRun:
                                 (ant_data[ant1][1] - ant_data[ant2][1]) ** 2 +
                                 (ant_data[ant1][2] - ant_data[ant2][2]) ** 2)
 
-                max_bl_uvwave = max(ant_pairs.values()) / (con.c / run['freq'])
+                max_bl_uvwave = max(ant_pairs.values()) / (con.c / run.freq)
                 beam_min = 1. / max_bl_uvwave / con.arcsec
 
                 cell_str = '{:.6f}arcsec'.format(beam_min / 4.)
                 cell_size = float('{:.6f}'.format(beam_min / 4.))
 
+                self.log.add_entry("INFO",
+                                   "With maximum baseline length of {:.0e}"
+                                   " wavelengths, a beam width of {:.2e}arcsec "
+                                   "is calculated and therefore using a cell "
+                                   "size of {:.2e}arcsec"
+                                   "".format(max_bl_uvwave, beam_min,
+                                             cell_size), timestamp=False)
+
                 # Define cleaning region as the box encapsulating the flux-model
                 # and determine minimum clean image size as twice that of the
                 # angular coverage of the flux-model
-                ff = fits.open(run['fits_flux'])[0]
+                ff = fits.open(run.fits_flux)[0]
                 fm_head = ff.header
 
                 nx, ny = fm_head['NAXIS1'], fm_head['NAXIS2']
@@ -2367,25 +2836,31 @@ class ModelRun:
 
                 # Derive jet major and minor axes from tau = 1 surface
                 r_0_au = self.model.params['geometry']['r_0']
+                mod_r_0_au = self.model.params['geometry']['mod_r_0']
                 w_0_au = self.model.params['geometry']['w_0']
-                tau_0 = mphys.tau_r(self.model, run['freq'], r_0_au)
-
-                r_0_as = np.arctan(r_0_au * con.au / con.parsec /
-                                   self.model.params['target']['dist'])  # rad
-                r_0_as /= con.arcsec  # arcsec
-
-                w_0_as = np.arctan(w_0_au * con.au / con.parsec /
-                                   self.model.params['target']['dist'])  # rad
-                w_0_as /= con.arcsec  # arcsec
-
+                tau_0 = mphys.tau_r(self.model, run.freq, r_0_au)
                 q_tau = self.model.params['power_laws']['q_tau']
                 eps = self.model.params['geometry']['epsilon']
-                jet_deconv_maj = 2. * r_0_as * (1. / tau_0) ** (1. / q_tau)
-                jet_deconv_min = 2. * w_0_as * (jet_deconv_maj / 2. /
-                                                r_0_as) ** eps
+                dist_pc = self.model.params['target']['dist']
 
-                jet_conv_maj = np.sqrt(jet_deconv_maj ** 2. + beam_min ** 2.)
-                jet_conv_min = np.sqrt(jet_deconv_min ** 2. + beam_min ** 2.)
+                jet_deconv_maj_au = mod_r_0_au * tau_0 ** (-1. / q_tau) +\
+                                    r_0_au - mod_r_0_au
+                jet_deconv_maj_au *= 2  # For biconical jet
+                jet_deconv_maj_as = np.arctan(jet_deconv_maj_au * con.au /
+                                              (dist_pc * con.parsec))  # rad
+                jet_deconv_maj_as /= con.arcsec  # arcsec
+
+                jet_deconv_min_au = mgeom.w_r(jet_deconv_maj_au / 2.,
+                                              w_0_au, mod_r_0_au, r_0_au, eps)
+                jet_deconv_min_as = np.arctan(jet_deconv_min_au * con.au /
+                                              (dist_pc * con.parsec))  # rad
+                jet_deconv_min_as /= con.arcsec  # arcsec
+
+                jet_conv_maj = np.sqrt(jet_deconv_maj_as ** 2. + beam_min ** 2.)
+                jet_conv_min = np.sqrt(jet_deconv_min_as ** 2. + beam_min ** 2.)
+
+                if jet_conv_min > jet_conv_maj:
+                    jet_conv_maj, jet_conv_min = jet_conv_min, jet_conv_maj
 
                 mask_str = 'box[[{}deg, {}deg], [{}deg, {}deg]]'.format(blc[0],
                                                                         blc[1],
@@ -2400,7 +2875,14 @@ class ModelRun:
                 else:
                     imsize_cells = [min_imsize_cells] * 2
 
-                im_name = fnl_noisy_ms.strip('ms') + 'imaging'
+                im_name = fnl_noisy_ms.rstrip('ms') + 'imaging'
+
+                if run.obs_type == 'continuum':
+                    specmode = 'mfs'
+                    restfreq = []
+                else:
+                    specmode = 'cube'
+                    restfreq = [str(run.freq) + 'Hz']
 
                 # Deconvolution of final, noisy, synthetic dataset
                 script.add_task(tasks.Tclean(vis=fnl_noisy_ms,
@@ -2411,67 +2893,91 @@ class ModelRun:
                                              robust=0.5,
                                              niter=500,
                                              nsigma=2.5,
+                                             specmode=specmode,
+                                             restfreq=restfreq,
                                              mask=mask_str,
                                              interactive=False))
 
-                fitsfile = run['dcy'] + os.sep + os.path.basename(im_name)
+                fitsfile = run.rt_dcy + os.sep + os.path.basename(im_name)
                 fitsfile += '.fits'
 
                 script.add_task(tasks.Exportfits(imagename=im_name + '.image',
                                                  fitsimage=fitsfile))
 
-                imfit_estimates_file = fitsfile.replace('fits', 'estimates')
+                if run.obs_type == 'continuum':
+                    imfit_estimates_file = fitsfile.replace('fits', 'estimates')
 
-                est_str = '{:.6f}, {:.1f}, {:.1f}, {:.5f}arcsec, ' \
-                          '{:.5f}arcsec, ' \
-                          '{:.2f}deg'
-                est_str = est_str.format(peak_flux, imsize_cells[0] / 2.,
-                                         imsize_cells[1] / 2.,
-                                         jet_conv_maj, jet_conv_min,
-                                         self.model.params['geometry']['pa'])
+                    est_str = '{:.6f}, {:.1f}, {:.1f}, {:.5f}arcsec, ' \
+                              '{:.5f}arcsec, ' \
+                              '{:.2f}deg'
+                    est_str = est_str.format(peak_flux,
+                                             imsize_cells[0] / 2.,
+                                             imsize_cells[1] / 2.,
+                                             jet_conv_maj, jet_conv_min,
+                                             self.model.params['geometry']['pa'])
 
-                with open(imfit_estimates_file, 'wt') as f:
-                    f.write(est_str)
-                imfit_results = fitsfile.replace('fits', 'imfit')
-                script.add_task(tasks.Imfit(imagename=fitsfile,
-                                            estimates=imfit_estimates_file,
-                                            summary=imfit_results))
-                script.execute(dcy=run['dcy'], dryrun=dryrun)
+                    with open(imfit_estimates_file, 'wt') as f:
+                        f.write(est_str)
+                    imfit_results = fitsfile.replace('fits', 'imfit')
+                    script.add_task(tasks.Imfit(imagename=fitsfile,
+                                                estimates=imfit_estimates_file,
+                                                summary=imfit_results))
 
-                run['imfit'] = {}
-                with open(imfit_results, 'rt') as f:
-                    for idx3, line in enumerate(f.readlines()):
-                        if idx3 == 0:
-                            units = [''] + line[1:].split()
-                        elif idx3 == 1:
-                            h = line[1:].split()
-                        else:
-                            line = [float(_) for _ in line.split()]
-                    for idx4, val in enumerate(line):
-                        run['imfit'][h[idx4]] = {'val': val,
-                                                 'unit': units[idx4]}
+                self.log.add_entry("INFO", "Executing CASA script {} with a "
+                                           "CASA log file, {}"
+                                           "".format(script.casafile,
+                                                     script.logfile),
+                                   timestamp=False)
+                script.execute(dcy=run.rt_dcy, dryrun=dryrun)
 
-                run['ms_noisy'] = fnl_noisy_ms
-                run['ms_clean'] = fnl_clean_ms
-                run['clean_image'] = fitsfile
+                if run.obs_type == 'continuum':
+                    run.results['imfit'] = {}
+                    with open(imfit_results, 'rt') as f:
+                        for idx3, line in enumerate(f.readlines()):
+                            if idx3 == 0:
+                                units = [''] + line[1:].split()
+                            elif idx3 == 1:
+                                h = line[1:].split()
+                            else:
+                                line = [float(_) for _ in line.split()]
+                        for idx4, val in enumerate(line):
+                            run.results['imfit'][h[idx4]] = {'val': val,
+                                                             'unit': units[idx4]}
 
-            self.runs[idx]['completed'] = True
+                run.products['ms_noisy'] = fnl_noisy_ms
+                run.products['ms_clean'] = fnl_clean_ms
+                run.products['clean_image'] = fitsfile
+                self.log.add_entry("INFO",
+                                   "Run #{}'s synthetic observations completed "
+                                   "with noisy measurement set saved to {}, "
+                                   "clean measurement set saved to {}, "
+                                   "and final, clean image saved to {}"
+                                   "".format(idx + 1, fnl_noisy_ms,
+                                             fnl_clean_ms, fitsfile))
+
+            self.runs[idx].completed = True
+
+        for year in self.params["continuum"]['times']:
+            self.plot_fluxes(year)
 
         self.save(self.save_file)
         self.model.save(self.model_file)
 
         return None  # self.runs[idx]['products']
 
-    def plot_fluxes(self, plot_time, figsize=[cfg.plots["dims"]["column"]] * 2):
+    def plot_fluxes(self, plot_time, plot_reynolds=True,
+                    figsize=[cfg.plots["dims"]["column"]] * 2):
         freqs, fluxes = [], []
         for idx, run in enumerate(self.runs):
-            if run['time'] == plot_time:
-                if run['completed']:
-                    flux_data = fits.open(run['fits_flux'])[0].data[0]
+            if run.year == plot_time:
+                if run.completed:
+                    #flux_data = fits.open(run.fits_flux)[0].data[0]
+                    flux = run.results['flux']
                 else:
-                    flux_data = self.model.flux_ff(run['freq'])
-                fluxes.append(np.nansum(flux_data))
-                freqs.append(run['freq'])
+                    flux_data = self.model.flux_ff(run.freq)
+                    flux = np.nansum(np.nanmean(flux_data, axis=0))
+                fluxes.append(flux)
+                freqs.append(run.freq)
 
         freqs = np.array(freqs)
         fluxes = np.array(fluxes)
@@ -2485,6 +2991,9 @@ class ModelRun:
                                    fluxes[n - 1]) /
                           np.log10(freqs[n] / freqs[n - 1]))
 
+        l_z = self.model.nz * self.model.csize /\
+              self.model.params['target']['dist']
+
         plt.close('all')
 
         fig, ax1 = plt.subplots(1, 1, figsize=figsize)
@@ -2493,35 +3002,33 @@ class ModelRun:
         # Alphas are calculated at the middle of two neighbouring frequencies
         # in logarithmic space, hence the need for caclulation of freqs_a,
         # the logarithmic mean of the two frequencies
-        freqs_a = [10**np.mean(np.log10([f, freqs[i + 1]])) for i, f in
+        freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
                    enumerate(freqs[:-1])]
         ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
-                 mfc='cornflowerblue', lw=2, zorder=2)
+                 mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
 
         freqs_r86 = np.logspace(np.log10(np.min(xlims)),
                                 np.log10(np.max(xlims)), 100)
         flux_exp = []
         for freq in freqs_r86:
-            if self.model.params['grid']['l_z'] is not None:
-                f = mphys.flux_expected_r86(self.model, freq,
-                                            self.model.params['grid']['l_z'] *
-                                            0.5)
-            else:
-                i = np.radians(self.model.params["geometry"]["inc"])
-                rr, ww = self.model.rr, self.model.ww
-                wrs = mgeom.w_r(rr, self.model.params['geometry']['w_0'],
-                                self.model.params['geometry']['mod_r_0'],
-                                self.model.params['geometry']['r_0'],
-                                self.model.params['geometry']['epsilon'])
-                rmax = np.nanmax(np.where(ww <= wrs, rr, np.NaN))
-                ymax = np.sin(i) * rmax
-                ymax = np.arctan(ymax / (self.model.params['target']['dist'] *
-                                         con.parsec / con.au)) / con.arcsec
-                ymin = np.sin(i) * self.model.params["geometry"]['mod_r_0']
-                ymin = np.arctan(ymin /
-                                  (self.model.params['target']['dist'] *
-                                   con.parsec / con.au)) / con.arcsec
-                f = mphys.flux_expected_r86(self.model, freq, ymax)#, ymin)
+            #if self.model.params['grid']['l_z'] is not None:
+            f = mphys.flux_expected_r86(self.model, freq, l_z * 0.5)
+            # else:
+            #     i = np.radians(self.model.params["geometry"]["inc"])
+            #     rr, ww = self.model.rr, self.model.ww
+            #     wrs = mgeom.w_r(rr, self.model.params['geometry']['w_0'],
+            #                     self.model.params['geometry']['mod_r_0'],
+            #                     self.model.params['geometry']['r_0'],
+            #                     self.model.params['geometry']['epsilon'])
+            #     rmax = np.nanmax(np.where(ww <= wrs, rr, np.NaN))
+            #     ymax = np.sin(i) * rmax
+            #     ymax = np.arctan(ymax / (self.model.params['target']['dist'] *
+            #                              con.parsec / con.au)) / con.arcsec
+            #     ymin = np.sin(i) * self.model.params["geometry"]['mod_r_0']
+            #     ymin = np.arctan(ymin /
+            #                       (self.model.params['target']['dist'] *
+            #                        con.parsec / con.au)) / con.arcsec
+            #     f = mphys.flux_expected_r86(self.model, freq, ymax)#, ymin)
             flux_exp.append(f * 2.)  # for biconical jet
 
         alphas_r86 = []
@@ -2533,16 +3040,18 @@ class ModelRun:
         # in logarithmic space, hence the need for caclulation of freqs_a_r86
         freqs_a_r86 = [10**np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f in
                        enumerate(freqs_r86[:-1])]
-        ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--', lw=2,
-                 zorder=1)
+        if plot_reynolds:
+            ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--',
+                     lw=2, zorder=1)
 
         ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
-                   zorder=3, marker='o')
-
-        ax1.loglog(freqs_r86, flux_exp, color='gray', ls='-', lw=2, zorder=1)
-        ax1.loglog(freqs_r86,
-                   mphys.approx_flux_expected_r86(self.model, freqs_r86) * 2.,
-                   color='gray', ls='-.', lw=2, zorder=1)
+                   zorder=3, marker='o', markersize=5)
+        if plot_reynolds:
+            ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
+                       zorder=1)
+            ax1.loglog(freqs_r86,
+                       mphys.approx_flux_expected_r86(self.model, freqs_r86) *
+                       2., color='gray', ls='-.', lw=2, zorder=1)
         ax1.set_xlim(xlims)
         ax2.set_ylim(-0.2, 2.1)
         pfunc.equalise_axes(ax1, fix_x=False)
@@ -2562,12 +3071,27 @@ class ModelRun:
             ["Jet", "lz" + str(self.model.params["grid"]["l_z"]),
              "csize" + str(self.model.params["grid"]["c_size"])])
         save_file += '.png'
-        save_file = os.sep.join([self.dcy, save_file])
+        save_file = os.sep.join([self.dcy,
+                                 'Day{}'.format(int(plot_time * 365.)),
+                                 save_file])
 
-        png_metadata = {"Description": "Hello, this is some test text"}
-        print("Saving Radio SED figure to {}".format(save_file))
-        fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata)
+        title = "Radio SED plot at t={:.0f}yr for jet model '{}'"
+        title = title.format(plot_time, self.model.params['target']['name'])
 
+        png_metadata = cfg.plots['metadata']['png']
+        png_metadata["Title"] = title
+
+        pdf_metadata = cfg.plots['metadata']['pdf']
+        pdf_metadata["Title"] = title
+
+        self.log.add_entry("INFO",
+                           "Saving radio SED figure to {} for time {}yr"
+                           "".format(save_file.replace('png', '(png,pdf)'),
+                                     plot_time))
+        fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata,
+                    dpi=300)
+        fig.savefig(save_file.replace('png', 'pdf'), bbox_inches='tight',
+                    metadata=pdf_metadata, dpi=300)
         return None
 
     def radio_plot(self, run, percentile=5., savefig=False):
@@ -2594,8 +3118,6 @@ class ModelRun:
         None.
         """
         import matplotlib.gridspec as gridspec
-
-        freq = run['freq']
 
         plt.close('all')
 
@@ -2634,9 +3156,9 @@ class ModelRun:
         bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
         aspect = bbox.width / bbox.height
 
-        flux = fits.open(run['fits_flux'])[0].data[0]
-        taus = fits.open(run['fits_tau'])[0].data[0]
-        ems = fits.open(run['fits_em'])[0].data[0]
+        flux = fits.open(run.fits_flux)[0].data[0]
+        taus = fits.open(run.fits_tau)[0].data[0]
+        ems = fits.open(run.fits_em)[0].data[0]
 
         flux = np.where(flux > 0, flux, np.NaN)
         taus = np.where(taus > 0, taus, np.NaN)
@@ -2802,61 +3324,8 @@ class PointingScheme(object):
 
 
 if __name__ == '__main__':
-    from RaJePy.classes import JetModel, ModelRun
+    from RaJePy.classes import JetModel, Pipeline
     import RaJePy as rjp
 
-    jm = JetModel(rjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
-    pline = ModelRun(jm, rjp.cfg.dcys['files'] + os.sep +
-                    'example-pipeline-params.py')
-    #
-    # # jm.plot_mass_volume_slices()
-    pline.plot_fluxes(0)
-    # width = 1.
-    # inc = 30.
-    # dims = (10, 10, 10)
-    #
-    # grid = Grid(dims, width)
-    # # rot_grid = Grid(dims, width, inc)
-    #
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111, projection='3d')
-    #
-    # verts = np.empty((0, 3))
-    # for cell in grid.arr_cells.flatten():
-    #     verts = np.append(verts, cell.verts, axis=0)
-    #
-    # ax.scatter([_[0] for _ in verts],
-    #            [_[1] for _ in verts],
-    #            [_[2] for _ in verts],
-    #            c='b', marker='.')
-    #
-    # # rot_verts = np.empty((0, 3))
-    # # rot_face_mps = np.empty((0, 3))
-    # # rot_face_nvs = np.empty((0, 3))
-    # # for cell in rot_grid.arr_cells.flatten():
-    # #     rot_verts = np.append(rot_verts, cell.verts, axis=0)
-    # #     rot_face_mps = np.append(rot_face_mps, cell.face_mp, axis=0)
-    # #     rot_face_nvs = np.append(rot_face_nvs, cell.face_nv, axis=0)
-    # #
-    # # ax.scatter([_[0] for _ in rot_verts],
-    # #            [_[1] for _ in rot_verts],
-    # #            [_[2] for _ in rot_verts],
-    # #            c='r', marker='.')
-    # #
-    # # ax.scatter([_[0] for _ in rot_face_mps],
-    # #            [_[1] for _ in rot_face_mps],
-    # #            [_[2] for _ in rot_face_mps],
-    # #            c='g', marker='x')
-    # #
-    # # for idx, mp in enumerate(rot_face_mps):
-    # #     ax.plot([mp[0], mp[0] + rot_face_nvs[idx][0]],
-    # #             [mp[1], mp[1] + rot_face_nvs[idx][1]],
-    # #             [mp[2], mp[2] + rot_face_nvs[idx][2]],
-    # #             'b-')
-    #
-    # ax.set_xlabel('X Label')
-    # ax.set_ylabel('Y Label')
-    # ax.set_zlabel('Z Label')
-    #
-    # plt.show()
-
+    pline = Pipeline.load_pipeline('/Users/simon/Dropbox/Paper_RadioRT/Results'
+                                   '/TestModel1/modelrun.save')

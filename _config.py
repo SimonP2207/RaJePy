@@ -15,5 +15,11 @@ dcys = {"scripts": os.path.dirname(os.path.realpath(__file__)),
 
 plots = {"dims": {"column": 3.32153,  # inches
                   "text": 6.97522  # Inches
-                  }
+                  },
+         "metadata": {"pdf": {"Author": "Simon Purser",
+                              "Subject": 'https://github.com/SimonP2207/RaJePy'},
+                      "png": {"Author": "Simon Purser",
+                              "Source": 'https://github.com/SimonP2207/RaJePy'}
+                      }
          }
+

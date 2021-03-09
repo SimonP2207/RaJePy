@@ -235,6 +235,7 @@ class Tclean(_CasaTask):
               'projection': (str, 'TAN'),
               'startmodel': (str, ''),
               'specmode': (str, 'mfs'),
+              'restfreq': (list, ['']),
               'reffreq': (str, ''),
               'gridder': (str, 'standard'),
               'vptable': (str, ''),
@@ -300,7 +301,7 @@ class Concat(_CasaTask):
     """
 
     def __init__(self, **kwargs):
-        ps = {'vis': (list, ''),
+        ps = {'vis': (list, ['']),
               'concatvis': (str, ''),
               'freqtol': (str, ''),
               'dirtol': (str, ''),
@@ -309,7 +310,7 @@ class Concat(_CasaTask):
               'copypointing': (bool, True),
               'visweightscale': (list, []),
               'forcesingleephemfield': (str, '')}
-        super().__init__('exportfits', ps, **kwargs)
+        super().__init__('concat', ps, **kwargs)
 
 
 class Chdir(_CasaTask):
@@ -331,8 +332,8 @@ class Mkdir(_CasaTask):
 
     def __init__(self, **kwargs):
         ps = {'name': (str, ''),
-              'mode': (int, 0o777),
-              'exist_ok': (bool, True)}
+              'mode': (int, 0o777),}
+              #'exist_ok': (bool, True)}
         super().__init__('os.makedirs', ps, **kwargs)
 
 
@@ -376,6 +377,29 @@ class Imfit(_CasaTask):
         super().__init__('imfit', ps, **kwargs)
 
 
+class Immath(_CasaTask):
+    """
+    Perform mathematical operations on image data
+    """
+
+    def __init__(self, **kwargs):
+        ps = {'imagename': (str, ''),
+              'mode': (str, 'evalexpr'),
+              'expr': (str, ''),
+              'varnames': (str, ''),
+              'sigma': (str, '0.0mJy/beam'),
+              'outfile': (str, 'immath_results.im'),
+              'polithresh': (str, ''),
+              'mask': (str, ''),
+              'region': (str, ''),
+              'box': (str, ''),
+              'chans': (str, ''),
+              'stokes': (str, ''),
+              'imagemd': (str, ''),
+              'prec': (str, 'float')}
+        super().__init__('immath', ps, **kwargs)
+
+
 class AddGaussPBresponse(_CasaTask):
     """
     Add a telescope to the list of known primary-beam responses via the
@@ -402,7 +426,7 @@ class AddGaussPBresponse(_CasaTask):
 
 # Module testing code below
 if __name__ == '__main__':
-    from VaJePy.casa import Script
+    from RaJePy.casa import Script
 
     work_dcy = os.sep.join([os.path.expanduser('~'), 'Desktop', 'testdir'])
 

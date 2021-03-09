@@ -15,7 +15,8 @@ class Script(object):
         self._tasklist = []
 
         # Must always add e-MERLIN's primary beam response to CASA's vpmanager
-        from VaJePy.casa.tasks import AddGaussPBresponse
+        from RaJePy.casa.tasks import AddGaussPBresponse
+        from datetime import datetime as dt
 
         fwhm_str = '{:.3f}deg'.format(1.71768e10 / (1e9 * 25.))
         maxrad_str = '{:.3f}deg'.format(3.43537e10 / (1e9 * 25.))
@@ -24,6 +25,10 @@ class Script(object):
                                          halfwidth=fwhm_str,
                                          maxrad=maxrad_str,
                                          reffreq='1GHz'))
+
+        prefix = dt.now().strftime("%d%m%Y_%H%M%S")
+        self._logfile = prefix + '.log'
+        self._casafile = prefix + '.py'
 
     @property
     def tasklist(self):
@@ -41,25 +46,21 @@ class Script(object):
             for task in new_task:
                 self.tasklist.append(task)
 
-    def execute(self, dcy=os.getcwd(), dryrun=False):
-        import shutil
-        import subprocess
-        from datetime import datetime as dt
+    @property
+    def logfile(self):
+        return self._logfile
 
-        pwd = dcy
+    @property
+    def casafile(self):
+        return self._casafile
+
+    def execute(self, dcy=os.getcwd(), dryrun=False):
+        import subprocess
 
         if dcy != os.getcwd():
             os.chdir(dcy)
-        #
-        # tmp_dcy = pwd + os.sep + 'tmp'
-        # os.mkdir(tmp_dcy)
-        # os.chdir(tmp_dcy)
 
-        prefix = dt.now().strftime("%d%m%Y_%H%M%S")
-        logfile = dcy + os.sep + prefix + '.log'
-        casafile = dcy + os.sep + prefix + '.py'
-
-        with open(casafile, 'a+') as lf:
+        with open(dcy + os.sep + self.casafile, 'a+') as lf:
             # Necessary imports within CASA environment
             lf.write('import shutil\n')
             for task in self.tasklist:
@@ -68,17 +69,13 @@ class Script(object):
         cmd = "casa --nogui --nologger --agg --logfile {} -c {}"
 
         if dryrun:
-            print(cmd.format(logfile, casafile))
-            print("Contents of {}:".format(casafile))
-            with open(casafile, 'rt') as lf: print(lf.read())
-
-            # shutil.copy(logfile, dcy + os.sep + logfile)
-            # shutil.copy(casafile, dcy + os.sep + os.path.basename(casafile))
-
-            # print("Cleaning up by removing {}\n".format(tmp_dcy))
-            # shutil.rmtree(tmp_dcy)
+            print(cmd.format(dcy + os.sep + self.logfile,
+                             dcy + os.sep + self.casafile))
+            print("Contents of {}:".format(dcy + os.sep + self.casafile))
+            with open(dcy + os.sep + self.casafile, 'rt') as lf: print(
+                lf.read())
 
         else:
-            op = subprocess.run(cmd.format(logfile, casafile), shell=True)
-            # print("Cleaning up by removing {}\n".format(tmp_dcy))
-            # shutil.rmtree(tmp_dcy)
+            op = subprocess.run(cmd.format(dcy + os.sep + self.logfile,
+                                           dcy + os.sep + self.casafile),
+                                shell=True)
