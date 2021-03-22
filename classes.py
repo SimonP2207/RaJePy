@@ -17,6 +17,7 @@ import pickle
 from collections.abc import Iterable
 from typing import Union, Callable, List, Tuple
 
+import tabulate
 import numpy as np
 import astropy.units as u
 import scipy.constants as con
@@ -68,7 +69,12 @@ class JetModel:
         loaded = pickle.load(open(model_file, 'rb'))
 
         # Create new JetModel class instance
-        new_jm = cls(loaded["params"], log=loaded['log'])
+        if 'log' in loaded:
+            new_jm = cls(loaded["params"], log=loaded['log'])
+        else:
+            dcy = os.path.expanduser('~')
+            new_jm = cls(loaded["params"],
+                         log=logger.Log(dcy + os.sep + 'temp.log'))
 
         # If fill factors/projected areas have been previously calculated,
         # assign to new instance
@@ -117,7 +123,12 @@ class JetModel:
         # self._dcy = self.params['dcys']['model_dcy']
         self._name = self.params['target']['name']
         self._csize = self.params['grid']['c_size']
-        self._log = log
+
+        if log is not None:
+            self._log = log
+        else:
+            self._log = logger.Log(os.path.expanduser('~') +  os.sep +
+                                   'temp.log', verbose=True)
 
         # Determine number of cells in x, y, and z-directions
         if self.params['grid']['l_z'] is not None:
@@ -2016,7 +2027,33 @@ class ContinuumRun:
             if val is None:
                 self.simobserve = False
 
-    #def __str__(self):
+    def __str__(self):
+        hdr = ['Year', 'Type', 'Telescope', 't_obs', 't_int', 'Line',
+               'Frequency', 'Bandwidth', 'Channel width',
+               'Radiative Transfer?', 'Synthetic Obs.?', 'Completed?']
+        units = ['yr', '', '', 's', 's', '', 'Hz', 'Hz', 'Hz', '', '', '']
+        fmt = ['.2f', '', '', '.0f', '.0f', '', '.3e', '.3e', '.3e', '', '', '']
+        val = [self._year, self._obs_type.capitalize(), self._tscop,
+               self._t_obs, self._t_int,
+               None if self._obs_type == 'continuum' else self.line,
+               self._freq, self._bandwidth, self._chanwidth,
+               self.radiative_transfer, self.simobserve, self.completed]
+
+        for i, v in enumerate(val):
+            if v is None:
+                val[i] = '-'
+
+        tab_head = []
+        for i, h in enumerate(hdr):
+            if units[i] != '':
+                tab_head.append(h + '\n[' + units[i] +']')
+            else:
+                tab_head.append(h)
+
+        tab = tabulate.tabulate([val], tab_head, tablefmt="fancy_grid",
+                                floatfmt=fmt)
+
+        return tab
 
 
     @property
@@ -2211,7 +2248,15 @@ class Pipeline:
         jm = JetModel.load_model(loaded["model_file"])
         params = loaded["params"]
 
-        new_modelrun = cls(jm, params, log=loaded['log'])
+        if 'log' in loaded:
+            new_modelrun = cls(jm, params, log=loaded['log'])
+        else:
+            dcy = os.path.dirname(os.path.expanduser(loaded['model_file']))
+            log_file = os.sep.join([dcy,
+                                    os.path.basename(load_file).split('.')[0]
+                                    + '.log'])
+            new_modelrun = cls(jm, params, log=logger.Log(log_file))
+
         new_modelrun.runs = loaded["runs"]
 
         return new_modelrun
@@ -2278,7 +2323,14 @@ class Pipeline:
             else:
                 self._log = logger.Log(fname=os.sep.join([self.dcy, log_name]))
 
-        self.model.log = self.log
+        # Make sure that Pipeline and JetModel logs are the same object
+        if self.model.log is None:
+            self.model.log = self.log
+        else:
+            new_log = logger.Log.combine_logs(self.log, self.model.log,
+                                              self.log.filename,
+                                              delete_old_logs=True)
+            self.log = self.model.log = new_log
 
         if self.params['continuum']['times'] is not None:
             self.params['continuum']['times'].sort()
@@ -2302,6 +2354,7 @@ class Pipeline:
         chanws = self.params['continuum']['chanws']
         self.log.add_entry(mtype="INFO",
                            entry="Reading in continuum runs to pipeline")
+        idx1, idx2 = None, None
         for idx1, time in enumerate(self.params['continuum']['times']):
             for idx2, freq in enumerate(self.params['continuum']['freqs']):
                 run = ContinuumRun(self.dcy, time, freq,
@@ -2310,12 +2363,15 @@ class Pipeline:
                                    t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
                                    t_ints[idx2] if miscf.is_iter(t_ints) else t_ints,
                                    tscps[idx2] if miscf.is_iter(tscps) else tscps)
-                self.log.add_entry(mtype="INFO",
-                                   entry="Run #{} -> Details:\n{}"
-                                         "".format(len(runs) + 1,
-                                                   run.__str__()),
-                                   timestamp=False)
+                # self.log.add_entry(mtype="INFO",
+                #                    entry="Run #{} -> Details:\n{}"
+                #                          "".format(len(runs) + 1,
+                #                                    run.__str__()),
+                #                    timestamp=True)
                 runs.append(run)
+        if idx1 is None and idx2 is None:
+            self.log.add_entry(mtype="WARNING", entry="No continuum runs found",
+                               timestamp=True)
 
         t_obs = self.params['rrls']['t_obs']
         tscps = self.params['rrls']['tscps']
@@ -2325,6 +2381,7 @@ class Pipeline:
         self.log.add_entry(mtype="INFO",
                            entry="Reading in radio recombination line runs to "
                                  "pipeline")
+        idx1, idx2 = None, None
         for idx1, time in enumerate(self.params['rrls']['times']):
             for idx2, line in enumerate(self.params['rrls']['lines']):
                 run = RRLRun(self.dcy, time, line,
@@ -2333,14 +2390,53 @@ class Pipeline:
                              t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
                              t_ints[idx2] if miscf.is_iter(t_ints) else t_ints,
                              tscps[idx2] if miscf.is_iter(tscps) else tscps)
-                self.log.add_entry(mtype="INFO",
-                                   entry="Run #{} -> Details:\n{}"
-                                         "".format(len(runs) + 1,
-                                                   run.__str__()),
-                                   timestamp=False)
+                # self.log.add_entry(mtype="INFO",
+                #                    entry="Run #{} -> Details:\n{}"
+                #                          "".format(len(runs) + 1,
+                #                                    run.__str__()),
+                #                    timestamp=True)
                 runs.append(run)
 
+        if idx1 is None and idx2 is None:
+            self.log.add_entry(mtype="WARNING", entry="No RRL runs found",
+                               timestamp=True)
         self._runs = runs
+        self.log.add_entry(mtype="INFO",
+                           entry=self.__str__(), timestamp=True)
+
+
+    def __str__(self):
+        hdr = ['Year', 'Type', 'Telescope', 't_obs', 't_int', 'Line',
+               'Frequency', 'Bandwidth', 'Channel width',
+               'Radiative Transfer?', 'Synthetic Obs.?', 'Completed?']
+        units = ['yr', '', '', 's', 's', '', 'Hz', 'Hz', 'Hz', '', '', '']
+        fmt = ['.2f', '', '', '.0f', '.0f', '', '.3e', '.3e', '.3e', '', '', '']
+        vals = []
+
+        for run in self.runs:
+            val = [run._year, run._obs_type.capitalize(), run._tscop,
+                   run._t_obs, run._t_int,
+                   None if run._obs_type == 'continuum' else run.line,
+                   run._freq, run._bandwidth, run._chanwidth,
+                   run.radiative_transfer, run.simobserve, run.completed]
+
+            for i, v in enumerate(val):
+                if v is None:
+                    val[i] = '-'
+
+            vals.append(val)
+
+        tab_head = []
+        for i, h in enumerate(hdr):
+            if units[i] != '':
+                tab_head.append(h + '\n[' + units[i] +']')
+            else:
+                tab_head.append(h)
+
+        tab = tabulate.tabulate(vals, tab_head, tablefmt="psql", floatfmt=fmt,
+                                numalign='center', stralign='center')
+
+        return tab
 
     def save(self, save_file: str, absolute_directories: bool = False):
         """
@@ -2414,6 +2510,10 @@ class Pipeline:
     @property
     def log(self):
         return self._log
+
+    @log.setter
+    def log(self, new_log):
+        self._log = new_log
 
     def execute(self, simobserve=True, verbose=True, dryrun=False,
                 resume=True, clobber=False):
@@ -2838,7 +2938,7 @@ class Pipeline:
                 r_0_au = self.model.params['geometry']['r_0']
                 mod_r_0_au = self.model.params['geometry']['mod_r_0']
                 w_0_au = self.model.params['geometry']['w_0']
-                tau_0 = mphys.tau_r(self.model, run.freq, r_0_au)
+                tau_0 = mphys.tau_r_from_jm(self.model, run.freq, r_0_au)
                 q_tau = self.model.params['power_laws']['q_tau']
                 eps = self.model.params['geometry']['epsilon']
                 dist_pc = self.model.params['target']['dist']

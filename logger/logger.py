@@ -13,8 +13,53 @@ class Log:
     """
     Class to handle creation, modification and storage of log entries
     """
+    @classmethod
+    def combine_logs(cls, log1: 'Log', log2: 'Log', filename: str,
+                     delete_old_logs: bool) -> 'Log':
+        """
+        Combine two separate logs in to one log with time-sorted entries.
+        Writes all previous entries in that order, to new file.
 
-    def __init__(self, fname, verbose=True):
+        Parameters
+        ----------
+        log1 : Log
+            First log to combine
+        log2 : Log
+            Second log to combine
+        filename : str
+            Full path to new log file
+        delete_old_logs : bool
+            Whether to delete old log files
+
+        Returns
+        -------
+        New Log instance.
+
+        """
+        # Remove old log files if same as new log file, or if requested
+        for logfile in (log1.filename, log2.filename):
+            if delete_old_logs or filename == logfile:
+                if os.path.exists(logfile):
+                    os.remove(logfile)
+
+        # Time sort combined log entries of log1 and log2
+        rts = [(log1.entries[k], log1.entries[k].rtime) for k in log1.entries]
+        rts += [(log2.entries[k], log2.entries[k].rtime) for k in log2.entries]
+        rts = sorted(rts, key=lambda x: x[1])
+
+        all_entries = {n: rts[i][0] for i, n in enumerate(range(len(rts)))}
+
+        # new_log is verbose if either of log1 or log2 is verbose
+        new_log = cls(filename, verbose=True in (log1.verbose, log2.verbose))
+
+        # Write all entries from logs to file
+        new_log.entries = all_entries
+        for n in new_log.entries:
+            new_log.write_entry(new_log.entries[n])
+
+        return new_log
+
+    def __init__(self, fname: str, verbose: bool = True):
         """
         Parameters
         ----------
@@ -54,7 +99,8 @@ class Log:
     def entries(self, new_entries):
         self._entries = new_entries
 
-    def add_entry(self, mtype, entry, timestamp=True):
+    def add_entry(self, mtype: str, entry: 'Entry',
+                  timestamp: bool = True) -> None:
         """
         Add entry to log
 
@@ -69,7 +115,6 @@ class Log:
         Returns
         -------
         None.
-
         """
         if not os.path.exists(os.path.dirname(self.filename)):
             # Raise FileNotFoundError (subclass of builtin OSError) correctly
@@ -89,9 +134,21 @@ class Log:
         if self.verbose:
             print(new_entry)
 
-        with open(self.filename, 'at') as f:
-            f.write(('\n' if len(self.entries) != 1 else "") +
-                    new_entry.__str__())
+        self.write_entry(new_entry)
+
+    def write_entry(self, entry):
+        if not os.path.exists(self.filename):
+            prefix = ''
+        else:
+            with open(self.filename, 'rt') as f:
+                existing_lines = f.readlines()
+                if len(existing_lines) == 0:
+                    prefix = ''
+                else:
+                    prefix = '\n'
+        with open(self.filename, 'at+') as f:
+            f.write(prefix + entry.__str__())
+
 
 
 class Entry:
@@ -138,7 +195,8 @@ class Entry:
                             "', '".join(self._valid_mtypes[:-1]) + "' or '" +
                             self._valid_mtypes[-1] + "'")
 
-        self._mtime = time.localtime()
+        self._rtime = time.time()  # Time of entry recording (precision)
+        self._mtime = time.localtime()  # Time to be displayed in message
         self._mtype = mtype
         self._message = entry
         self.timestamp = timestamp
@@ -149,11 +207,27 @@ class Entry:
                         self.timestamp)
 
     def __str__(self):
-        if self.timestamp:
-            return ':: '.join([self.time_str(), self.mtype, self.message])
-        else:
-            return ' ' * (len(self.time_str()) + 3) + ':: '.join([self.mtype,
-                                                                  self.message])
+        preamble = ':: '.join([self.time_str(),
+                               format(self.mtype, str(Entry._mtype_max_len))])
+
+        if not self.timestamp:
+            preamble = ' ' * len(preamble)
+
+        fmt_message = self.message.split('\n')
+        if len(fmt_message) > 1:
+            for i, line in enumerate(fmt_message):
+                if i is not 0:
+                    fmt_message[i] = ' ' * (len(preamble) + 2) + line
+
+        fmt_message = '\n'.join(fmt_message)
+
+        return ': '.join([preamble, fmt_message])
+        # else:
+        #     return ' ' * (len(preamble) + 2) + ': '.join([self.mtype, self.message])
+
+    @property
+    def rtime(self):
+        return self._rtime
 
     @property
     def message(self):
@@ -169,3 +243,30 @@ class Entry:
 
     def time_str(self, fmt='%d%B%Y-%H:%M:%S'):
         return time.strftime(fmt, self.mtime).upper()
+
+if __name__ == '__main__':
+    import numpy as np
+
+    log1 = Log(os.path.expanduser("~") + os.sep + "testlog1.log")
+    log2 = Log(os.path.expanduser("~") + os.sep + "testlog2.log")
+
+    for n in range(20):
+        if n % 2 == 0:
+            log1.add_entry(np.random.choice(Entry._valid_mtypes), str(n))
+        else:
+            log2.add_entry(np.random.choice(Entry._valid_mtypes), str(n))
+
+    log3 = Log.combine_logs(log1, log2,
+                            os.path.expanduser("~") + os.sep + "testlog3.log",
+                            True)
+
+    # rtimes = [(log1, log1.entries[k], log1.entries[k].rtime) for k in log1.entries]
+    # rtimes += [(log2, log2.entries[k], log2.entries[k].rtime) for k in log2.entries]
+    # rtimes = sorted(rtimes, key=lambda x: x[2])
+    #
+    # all_entries = {n: rtimes[i][1] for i, n in enumerate(range(len(rtimes)))}
+    
+    # log3 = Log(os.path.expanduser("~") + os.sep + "testlog3.log")
+    # log3.entries = all_entries
+    # for n in log3.entries:
+    #     log3.write_entry(log3.entries[n])

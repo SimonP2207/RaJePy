@@ -9,6 +9,27 @@ import scipy.constants as con
 from scipy.special import hyp2f1
 
 
+def mod_r_0(opang, epsilon, w_0):
+    """
+    Calculates 'modified' launching radius i.e. the radius, r_0, at which a
+    standard Reynolds (1986) jet would have a width, w_0, whilst maintaining a
+    given opening angle
+
+    Parameters
+    ----------
+    opang : float
+        Opening angle of jet (deg)
+    epsilon : float
+        Power-law exponent for jet-width with distance along jet
+    w_0 : float
+        Half-width of jet-base (any physical unit)
+
+    Returns
+    -------
+    'Modified' launching radius in same physical units as given for arg w_0
+    """
+    return epsilon * w_0 / np.tan(np.radians(opang) / 2.)
+
 def t_rw(r, w, params):
     """
     Function to return time as a function of position (r, w) in a jet

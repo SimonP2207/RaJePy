@@ -12,6 +12,114 @@ from RaJePy import classes as clss
 from RaJePy.maths import geometry as geom
 from uncertainties import ufloat as uf
 
+def tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T,
+          opang, dist=None):
+    """
+    Distance from central object to surface at which optical depth, tau,
+    is equal to 1. Equation 4 of Reynolds (1986).
+
+    Parameters
+    ----------
+    r : float
+        Radius at which to determine optical depth (in au)
+    r_0 : float
+         Jet-launching radius (in au)
+    w_0 : float
+         Half-width at r_0 (in au)
+    n_0 : float
+         Number density at r_0 (in cm^-3)
+    chi_0 : float
+         Ionisation fraction at r_0
+    T_0 : float
+         Temperature at r_0 (in au)
+    freq : float
+        Frequency of observation (Hz)
+    inc : float
+         Inclination of jet to line of sight (in deg)
+    q_n : float
+         Power-law for number density with distance along jet axis
+         (dimensionless)
+    q_x : float
+         Power-law for ionisation fraction with distance along jet axis
+         (dimensionless)
+    q_T : float
+         Power-law for temperature with distance along jet axis (dimensionless)
+    opang : float
+         Opening angle of jet (in deg)
+    dist: float
+        Distance to target (pc). Default is None.
+
+    Returns
+    -------
+    float
+        Distance to tau = 1 surface from central object. If arg dist is None,
+        in au, if arg dist in pc, in arcsec
+
+    """
+    a_k = 0.212  # given as constants of cgs equations
+    m_r_0 = geom.mod_r_0(opang, epsilon, w_0 * con.au * 1e2)
+    q = epsilon + 2. * q_n + 2. * q_x - 1.35 * q_T
+    rho = ((r * con.au * 1e2) + m_r_0 - (r_0 * con.au * 1e2)) / m_r_0
+    tau = (2. * a_k * (w_0 * con.au * 1e2) * n_0 ** 2. * chi_0 ** 2. *
+           T_0 ** -1.35 * rho ** q * freq ** -2.1 / np.sin(np.radians(inc)))
+
+    return tau
+
+def r_tau1(r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T, opang,
+           dist=None):
+    """
+    Distance from central object to surface at which optical depth, tau,
+    is equal to 1. Equation 4 of Reynolds (1986).
+
+    Parameters
+    ----------
+    r_0 : float
+         Jet-launching radius (in au)
+    w_0 : float
+         Half-width at r_0 (in au)
+    n_0 : float
+         Number density at r_0 (in cm^-3)
+    chi_0 : float
+         Ionisation fraction at r_0
+    T_0 : float
+         Temperature at r_0 (in au)
+    freq : float
+        Frequency of observation (Hz)
+    inc : float
+         Inclination of jet to line of sight (in deg)
+    q_n : float
+         Power-law for number density with distance along jet axis
+         (dimensionless)
+    q_x : float
+         Power-law for ionisation fraction with distance along jet axis
+         (dimensionless)
+    q_T : float
+         Power-law for temperature with distance along jet axis (dimensionless)
+    opang : float
+         Opening angle of jet (in deg)
+    dist: float
+        Distance to target (pc). Default is None.
+
+    Returns
+    -------
+    float
+        Distance to tau = 1 surface from central object. If arg dist is None,
+        in au, if arg dist in pc, in arcsec
+
+    """
+    a_j, a_k = 6.5E-38, 0.212  # given as constants of cgs equations
+    m_r_0 = geom.mod_r_0(opang, epsilon, w_0 * con.au * 1e2)
+    q = epsilon + 2. * q_n + 2. * q_x - 1.35 * q_T
+    rho = (2. * a_k * (w_0 * con.au * 1e2) * n_0 ** 2. * chi_0 ** 2. *
+           T_0 ** -1.35 * freq ** -2.1 * np.sin(np.radians(inc))
+           ** -1.) ** (-1. / q)
+
+    r = rho * m_r_0 + (r_0 * con.au * 1e2) - m_r_0
+
+    if dist is None:
+        return r
+
+    return r / (con.au * 1e2) / dist
 
 def z_number(atom: str) -> int:
     """
@@ -245,90 +353,90 @@ def flux_expected_r86(jm, freq, y_max, y_min=None):
     return flux / 1e-26
 
 
-def flux_expected_r86_cs(jm, freq, y_max, y_min=None):
-    """
-    Exact flux expected from Equation 8 of Reynolds (1986) analytical model
-    paper, for monopolar jet.
-
-    Parameters
-    ----------
-    jm : JetModel
-        Instance of JetModel class.
-    freq : float
-        Frequency of observation (Hz)
-    y_max : float
-        Jet's angular extent to integrate flux over (arcsecs).
-    y_min : float
-        Minimum value from jet base to integrate from (arcsecs)
-    Returns
-    -------
-    float
-        Exact flux expected from Reynolds (1986)'s analytical model (Jy).
-
-    """
-    # Parse constants into local variables
-    a_j, a_k = 6.5E-38, 0.212  # given as constants of cgs equations
-    inc = jm.params['geometry']['inc']  # degrees
-    pa = 0.  # degrees
-    w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
-    T_0 = jm.params['properties']['T_0']  # K
-    n_0 = jm.params['properties']['n_0']  # cm^-3
-    x_0 = jm.params['properties']['x_0']  # dimensionless
-    q_tau = jm.params["power_laws"]["q_tau"]  # dimensionless
-    q_T = jm.params["power_laws"]["q_T"]  # dimensionless
-    eps = jm.params["geometry"]["epsilon"]  # dimensionless
-    mod_r_0 = jm.params['geometry']['mod_r_0'] * con.au * 1e2  # cm
-    mod_y_0 = mod_r_0 * np.sin(np.radians(inc))  # cm
-    r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
-    y_0 = r_0 * np.sin(np.radians(inc))  # cm
-    R_1 = jm.params["target"]["R_1"]
-    R_2 = jm.params["target"]["R_2"]
-    dist = jm.params["target"]["dist"] * con.parsec * 1e2  # cm
-
-    q_n = jm.params["power_laws"]["q_n"]
-    q_x = jm.params["power_laws"]["q_x"]
-    q_T = jm.params["power_laws"]["q_T"]
-    q_nd = jm.params["power_laws"]["q^d_n"]
-    q_xd = jm.params["power_laws"]["q^d_x"]
-    q_Td = jm.params["power_laws"]["q^d_T"]
-
-    # def tau_xyz(x, z):
-    # def tau_xyz(x, z):
-    #     def func2(y):
-    #         r, w = geom.xyz_to_rw(x, y, z, inc, 0.)
-    #         wr = geom.w_r(r, w_0, mod_r_0, r_0, eps)
-    #
-    #         if w > wr or r < r_0:
-    #             return 0.
-    #
-    #         const = a_k * n_0 ** 2. * x_0 ** 2. * T_0 ** -1.35
-    #         const *= freq ** -2.1
-    #
-    #         expnt1 = q_n * 2. + q_x * 2. - 1.35 * q_T
-    #         rho1 = ((r + mod_r_0 - r_0) / mod_r_0) ** expnt1
-    #
-    #         expnt2 = q_nd * 2. + q_xd * 2. - 1.35 * q_Td
-    #         rho2 = (geom.r_eff(w, R_1, R_2, w_0, r, mod_r_0, r_0, eps) /
-    #                 R_1) ** expnt2
-    #
-    #         return const * rho1 * rho2
-    #     return func2
-    # a, b = geom.y1_y2(x, z, w_0, r_0, mod_r_0, inc)
-    # return quad(func1(x, z), a, b)
-
-    # Lower and upper bounds in y
-    qfun = geom.y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='lower')
-    rfun = geom.y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='upper')
-
-    # Lower and upper bounds in x
-    gfun = geom.w_r_wrapped(w_0, mod_r_0, r_0, eps, inc, bound='lower')
-    hfun = geom.w_r_wrapped(w_0, mod_r_0, r_0, eps, inc, bound='upper')
-
-    # Lower and upper bounds in z
-    a = r_0 * np.sin(np.radians(inc))
-    b = np.tan(y_max * con.arcsec) * dist
-
-    return tplquad(flux_int_wrapped(freq, jm), a, b, gfun, hfun, qfun, rfun)
+# def flux_expected_r86_cs(jm, freq, y_max, y_min=None):
+#     """
+#     Exact flux expected from Equation 8 of Reynolds (1986) analytical model
+#     paper, for monopolar jet.
+#
+#     Parameters
+#     ----------
+#     jm : JetModel
+#         Instance of JetModel class.
+#     freq : float
+#         Frequency of observation (Hz)
+#     y_max : float
+#         Jet's angular extent to integrate flux over (arcsecs).
+#     y_min : float
+#         Minimum value from jet base to integrate from (arcsecs)
+#     Returns
+#     -------
+#     float
+#         Exact flux expected from Reynolds (1986)'s analytical model (Jy).
+#
+#     """
+#     # Parse constants into local variables
+#     a_j, a_k = 6.5E-38, 0.212  # given as constants of cgs equations
+#     inc = jm.params['geometry']['inc']  # degrees
+#     pa = 0.  # degrees
+#     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
+#     T_0 = jm.params['properties']['T_0']  # K
+#     n_0 = jm.params['properties']['n_0']  # cm^-3
+#     x_0 = jm.params['properties']['x_0']  # dimensionless
+#     q_tau = jm.params["power_laws"]["q_tau"]  # dimensionless
+#     q_T = jm.params["power_laws"]["q_T"]  # dimensionless
+#     eps = jm.params["geometry"]["epsilon"]  # dimensionless
+#     mod_r_0 = jm.params['geometry']['mod_r_0'] * con.au * 1e2  # cm
+#     mod_y_0 = mod_r_0 * np.sin(np.radians(inc))  # cm
+#     r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
+#     y_0 = r_0 * np.sin(np.radians(inc))  # cm
+#     R_1 = jm.params["target"]["R_1"]
+#     R_2 = jm.params["target"]["R_2"]
+#     dist = jm.params["target"]["dist"] * con.parsec * 1e2  # cm
+#
+#     q_n = jm.params["power_laws"]["q_n"]
+#     q_x = jm.params["power_laws"]["q_x"]
+#     q_T = jm.params["power_laws"]["q_T"]
+#     q_nd = jm.params["power_laws"]["q^d_n"]
+#     q_xd = jm.params["power_laws"]["q^d_x"]
+#     q_Td = jm.params["power_laws"]["q^d_T"]
+#
+#     # def tau_xyz(x, z):
+#     # def tau_xyz(x, z):
+#     #     def func2(y):
+#     #         r, w = geom.xyz_to_rw(x, y, z, inc, 0.)
+#     #         wr = geom.w_r(r, w_0, mod_r_0, r_0, eps)
+#     #
+#     #         if w > wr or r < r_0:
+#     #             return 0.
+#     #
+#     #         const = a_k * n_0 ** 2. * x_0 ** 2. * T_0 ** -1.35
+#     #         const *= freq ** -2.1
+#     #
+#     #         expnt1 = q_n * 2. + q_x * 2. - 1.35 * q_T
+#     #         rho1 = ((r + mod_r_0 - r_0) / mod_r_0) ** expnt1
+#     #
+#     #         expnt2 = q_nd * 2. + q_xd * 2. - 1.35 * q_Td
+#     #         rho2 = (geom.r_eff(w, R_1, R_2, w_0, r, mod_r_0, r_0, eps) /
+#     #                 R_1) ** expnt2
+#     #
+#     #         return const * rho1 * rho2
+#     #     return func2
+#     # a, b = geom.y1_y2(x, z, w_0, r_0, mod_r_0, inc)
+#     # return quad(func1(x, z), a, b)
+#
+#     # Lower and upper bounds in y
+#     qfun = geom.y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='lower')
+#     rfun = geom.y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='upper')
+#
+#     # Lower and upper bounds in x
+#     gfun = geom.w_r_wrapped(w_0, mod_r_0, r_0, eps, inc, bound='lower')
+#     hfun = geom.w_r_wrapped(w_0, mod_r_0, r_0, eps, inc, bound='upper')
+#
+#     # Lower and upper bounds in z
+#     a = r_0 * np.sin(np.radians(inc))
+#     b = np.tan(y_max * con.arcsec) * dist
+#
+#     return tplquad(flux_int_wrapped(freq, jm), a, b, gfun, hfun, qfun, rfun)
 
 
 def flux_int_wrapped(freq: float, jm) -> Callable:
@@ -461,10 +569,10 @@ def gff(freq, temp, z=1.):
 gff = np.vectorize(gff)
 
 
-def tau_r(jm, freq, r):
+def tau_r_from_jm(jm, freq, r) -> float:
     """
     Optical depth from Equations 4 + 5 of Reynolds (1986) analytical model
-    paper, for monopolar jet.
+    paper, for monopolar jet. Parameters are extracted from a JetModel instance
 
     Parameters
     ----------
@@ -477,46 +585,44 @@ def tau_r(jm, freq, r):
     Returns
     -------
     float
-        Exact flux expected from Reynolds (1986)'s analytical model (Jy).
-
+        Distance to tau = 1 surface from central object in arcsec
     """
-    a_j, a_k = 6.5E-38, 0.212  # given as constants of cgs equations
-    d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
     inc = jm.params['geometry']['inc']  # degrees
-    mod_r_0 = jm.params['geometry']['mod_r_0'] * con.au * 1e2  # cm
     r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
-    y_0 = r_0 * np.sin(np.radians(inc))  # cm
+    opang = jm.params['geometry']['opang']  # deg
     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
     d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
     T_0 = jm.params['properties']['T_0']  # K
     n_0 = jm.params['properties']['n_0']  # cm^-3
     chi_0 = jm.params['properties']['x_0']  # dimensionless
-    q_tau = jm.params["power_laws"]["q_tau"]  # dimensionless
+    q_n = jm.params["power_laws"]["q_n"]  # dimensionless
+    q_x = jm.params["power_laws"]["q_x"]  # dimensionless
+    q_T = jm.params["power_laws"]["q_T"]  # dimensionless
+    epsilon = jm.params["power_laws"]["epsilon"]
 
-    tau_0 = 2. * a_k * w_0 * n_0 ** 2. * chi_0 ** 2. * T_0 ** -1.35 * \
-            freq ** -2.1 * np.sin(np.radians(inc)) ** -1.
-
-    return tau_0 * (((r * con.au * 1e2) + mod_r_0 - r_0) / mod_r_0) ** q_tau
+    return tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x,
+                 q_T, opang, dist=d)
 
 
 if __name__ == '__main__':
     from RaJePy.classes import JetModel
     import RaJePy as rjp
+    import matplotlib.pylab as plt
 
     jm = JetModel(rjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
-    a = flux_expected_r86_cs(jm, 5e9, .05)
-    # freqs = np.logspace(8, 12, 13)
-    # fluxes, fluxes_approx = [], []
-    # r_0 = jm.params['geometry']['r_0']
-    # dist = jm.params['target']['dist']
-    # for freq in freqs:
-    #     fluxes.append(2 * flux_expected_r86(jm, freq, .5))
-    #     fluxes_approx.append(2. * approx_flux_expected_r86(jm, freq))
-    #
-    # plt.close('all')
-    #
-    # plt.loglog(freqs, fluxes, 'ro')
-    # plt.loglog(freqs, fluxes_approx, 'gx')
-    #
-    # plt.show()
+
+    freqs = np.logspace(8, 12, 13)
+    fluxes, fluxes_approx = [], []
+    r_0 = jm.params['geometry']['r_0']
+    dist = jm.params['target']['dist']
+    for freq in freqs:
+        fluxes.append(2 * flux_expected_r86(jm, freq, 10.))
+        fluxes_approx.append(2. * approx_flux_expected_r86(jm, freq))
+
+    plt.close('all')
+
+    plt.loglog(freqs, fluxes, 'ro')
+    plt.loglog(freqs, fluxes_approx, 'gx')
+
+    plt.show()
     #
