@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 import RaJePy._config as config
 
+EW_TELESCOPES = ('ATCA', 'WSRT')
+
 fname = 'Observatories_table.txt'
 fname = os.sep.join([config.dcys['files'], 'antenna_configs', fname])
 

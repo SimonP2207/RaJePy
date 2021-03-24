@@ -2757,7 +2757,7 @@ class Pipeline:
                 # HARD-CODED VALUE SET OF 8 SCANS
                 ew_split_final_n = 8
 
-                if tscop in ('ATCA', 'WSRT'):
+                if tscop in casa.observatories.EW_TELESCOPES:
                     ew_int = True
 
                 if ew_int or time_up < run.t_obs:
