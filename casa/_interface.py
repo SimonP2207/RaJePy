@@ -62,7 +62,7 @@ class Script(object):
 
         with open(dcy + os.sep + self.casafile, 'a+') as lf:
             # Necessary imports within CASA environment
-            lf.write('import shutil\n')
+            lf.write('import os\nimport shutil\n')
             for task in self.tasklist:
                 lf.write(str(task) + '\n')
 
