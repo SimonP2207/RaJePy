@@ -598,7 +598,7 @@ def tau_r_from_jm(jm, freq, r) -> float:
     q_n = jm.params["power_laws"]["q_n"]  # dimensionless
     q_x = jm.params["power_laws"]["q_x"]  # dimensionless
     q_T = jm.params["power_laws"]["q_T"]  # dimensionless
-    epsilon = jm.params["power_laws"]["epsilon"]
+    epsilon = jm.params["geometry"]["epsilon"]
 
     return tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x,
                  q_T, opang, dist=d)

@@ -216,7 +216,7 @@ class Entry:
         fmt_message = self.message.split('\n')
         if len(fmt_message) > 1:
             for i, line in enumerate(fmt_message):
-                if i is not 0:
+                if i != 0:
                     fmt_message[i] = ' ' * (len(preamble) + 2) + line
 
         fmt_message = '\n'.join(fmt_message)
