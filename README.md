@@ -31,16 +31,6 @@ optional arguments:
   -c, --clobber         Overwrite any data products/files present
 ```
 
-### `JetModel` class
-The purpose of the `JetModel` class is to initialise and calculate the physical model grid for an ionised jet.
-
-JetModel's `__init__` method takes one compulsory argument, `params`, and two optional keyword-arguments, `verbose` and `log`:
-- `params` : Full path to the model parameters file, an example for which is `RaJePy/files/example-model-params.py` (see a full description below)
-- `verbose`: Boolean determining if on an execution of JetModel's class/instance methods, verbose output to the terminal is wanted. Default is `True`.
-- `log`: Full path to an optional log file containing a detailed log of all of an instance's method outputs. `None` by default.
-
-For the initialisation of the jet model's physical parameters and their values in each grid cell, the analytical, power law-based approach of [Reynolds (1986)](https://ui.adsabs.harvard.edu/abs/1986ApJ...304..713R/abstract) is used. Those parameters described in that work form the basis of the input parameters required to define a jet model in `RaJePy`.
-
 #### Model parameter file
 For the model parameter file, a full-working example is given in `RaJePy/files/example-model-params.py` which contains the following:
 
@@ -214,13 +204,6 @@ Jet mass loss variability parameters
 
 Other lines of code at the bottom of `example-model-params.py` (below the comment `# DO NOT CHANGE BELOW!`) derive various required jet parameters. **Please do not change those lines!**
 
-### `Pipeline` class
-The purpose of the `Pipeline` class is to handle directory/file manipulation and perform synthetic observations via [casa](https://casa.nrao.edu/), their subsequent measurements and other analyses conducted on a `JetModel` instance.
-
-`Pipeline`'s `__init__` method takes two compulsory arguments, `jetmodel` and `params`:
-- `jetmodel`: `JetModel` instance to conduct all analyses and observations upon
-- `params` : Full path to the pipeline parameters file, an example for which is `RaJePy/files/example-pipeline-params.py` (see a full description below)
-
 #### Pipeline parameter file
 For the pipeline parameter file, a full-working example is given in `RaJePy/files/example-pipeline-params.py` which contains the following:
 
@@ -302,34 +285,6 @@ While for `params['rrls']`, the relevant radio recombination line is specified (
 |---------------|-----------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------|
 | `"lines"`     | Radio recombination lines for observing | `numpy.array` with `dtype=str`           | `numpy.array(['H56a', 'H42a', 'H76a'])`                                       |
 
-### Executing a complete pipeline
-After creating instances of the `JetModel` and `Pipeline` classes, execution of the desired synthetic observations etc. takes place via the `Pipeline` class' `execute` method. A complete script for execution of a synthetic observing and model calculation run would be:
-
-```python
-import os
-import RaJePy as rjp
-
-model_params = 'model-params.py'
-pline_params = 'pipeline-params.py'
-log_file = 'TestJet.log'
-
-jm = rjp.JetModel(model_params, log=log_file)
-pline = rjp.Pipeline(jm, pline_params)
-
-pline.execute(simobserve=True, dryrun=False)
-```
-
-#### `Pipeline.execute` method
-The `execute` method runs the complete pipeline, producing relevant plots, `.fits` model files, measurement sets and final clean image `.fits` files. It takes 5, optional, keyword-arguments:
-
-| `kwarg`      | Description                                                                                  | Type   |
-|--------------|----------------------------------------------------------------------------------------------|--------|
-| `simobserve` | Whether to conduct synthetic observations on the model `.fits` file                          | `bool` |
-| `verbose`    | Verbose output to the terminal?                                                              | `bool` |
-| `dryrun`     | Whether to execute a dry run, without actually running any calculations (for testing)        | `bool` |
-| `resume`     | Whether to resume a previously saved run (if saved model file and saved pipeline file exist) | `bool` |
-| `clobber`    | Whether to redo and overwrite previously written files [soon to be deprecated]               | `bool` |
-
 ### Data products
 If `/example/dcy` was given for `params['dcys']['model_dcy']` in the pipeline parameter file, the output from the above code would be:
 
@@ -372,6 +327,55 @@ If `/example/dcy` was given for `params['dcys']['model_dcy']` in the pipeline pa
 ├──Day100/  # Second epoch directory for modelling/observations
 │  └──...
 └──...
+```
+
+## Classes 
+### `classes.JetModel`
+The purpose of the `JetModel` class is to initialise and calculate the physical model grid for an ionised jet.
+
+JetModel's `__init__` method takes one compulsory argument, `params`, and two optional keyword-arguments, `verbose` and `log`:
+- `params` : Full path to the model parameters file, an example for which is `RaJePy/files/example-model-params.py` (see a full description below)
+- `verbose`: Boolean determining if on an execution of JetModel's class/instance methods, verbose output to the terminal is wanted. Default is `True`.
+- `log`: Full path to an optional log file containing a detailed log of all of an instance's method outputs. `None` by default.
+
+For the initialisation of the jet model's physical parameters and their values in each grid cell, the analytical, power law-based approach of [Reynolds (1986)](https://ui.adsabs.harvard.edu/abs/1986ApJ...304..713R/abstract) is used. Those parameters described in that work form the basis of the input parameters required to define a jet model in `RaJePy`.
+
+### `classes.Pipeline` class
+The purpose of the `Pipeline` class is to handle directory/file manipulation and perform synthetic observations via [casa](https://casa.nrao.edu/), their subsequent measurements and other analyses conducted on a `JetModel` instance.
+
+`Pipeline`'s `__init__` method takes two compulsory arguments, `jetmodel` and `params`:
+- `jetmodel`: `JetModel` instance to conduct all analyses and observations upon
+- `params` : Full path to the pipeline parameters file, an example for which is `RaJePy/files/example-pipeline-params.py` (see a full description below)
+
+#### `Pipeline.execute` method
+The `execute` method runs the complete pipeline, producing relevant plots, `.fits` model files, measurement sets and final clean image `.fits` files. It takes 5, optional, keyword-arguments:
+
+| `kwarg`      | Description                                                                                  | Type   |
+|--------------|----------------------------------------------------------------------------------------------|--------|
+| `simobserve` | Whether to conduct synthetic observations on the model `.fits` file                          | `bool` |
+| `verbose`    | Verbose output to the terminal?                                                              | `bool` |
+| `dryrun`     | Whether to execute a dry run, without actually running any calculations (for testing)        | `bool` |
+| `resume`     | Whether to resume a previously saved run (if saved model file and saved pipeline file exist) | `bool` |
+| `clobber`    | Whether to redo and overwrite previously written files [soon to be deprecated]               | `bool` |
+
+### `casa.Script` class
+
+
+### Use RaJePy as its own module to execute your own pipeline
+After creating instances of the `JetModel` and `Pipeline` classes, execution of the desired synthetic observations etc. takes place via the `Pipeline` class' `execute` method. A complete script for execution of a synthetic observing and model calculation run would be:
+
+```python
+import os
+import RaJePy as rjp
+
+model_params = 'model-params.py'
+pline_params = 'pipeline-params.py'
+log_file = 'TestJet.log'
+
+jm = rjp.JetModel(model_params, log=log_file)
+pline = rjp.Pipeline(jm, pline_params)
+
+pline.execute(simobserve=True, dryrun=False)
 ```
 
 ## Requirements:
