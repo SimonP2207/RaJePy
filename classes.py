@@ -3031,18 +3031,25 @@ class Pipeline:
                 script.execute(dcy=run.rt_dcy, dryrun=dryrun)
 
                 if run.obs_type == 'continuum':
-                    run.results['imfit'] = {}
-                    with open(imfit_results, 'rt') as f:
-                        for idx3, line in enumerate(f.readlines()):
-                            if idx3 == 0:
-                                units = [''] + line[1:].split()
-                            elif idx3 == 1:
-                                h = line[1:].split()
-                            else:
-                                line = [float(_) for _ in line.split()]
-                        for idx4, val in enumerate(line):
-                            run.results['imfit'][h[idx4]] = {'val': val,
-                                                             'unit': units[idx4]}
+                    if os.path.exists(imfit_results):
+                        run.results['imfit'] = {}
+                        with open(imfit_results, 'rt') as f:
+                            for idx3, line in enumerate(f.readlines()):
+                                if idx3 == 0:
+                                    units = [''] + line[1:].split()
+                                elif idx3 == 1:
+                                    h = line[1:].split()
+                                else:
+                                    line = [float(_) for _ in line.split()]
+                            for idx4, val in enumerate(line):
+                                run.results['imfit'][h[idx4]] = {'val': val,
+                                                                 'unit': units[idx4]}
+                    else:
+                        self.log.add_entry("ERROR",
+                                           "Run #{}'s imfit failed. Please see"
+                                           "casa log, {}, for more details"
+                                           "".format(idx + 1, script.casafile))
+                        run.results['imfit'] = None
 
                 run.products['ms_noisy'] = fnl_noisy_ms
                 run.products['ms_clean'] = fnl_clean_ms
