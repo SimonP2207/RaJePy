@@ -3046,9 +3046,11 @@ class Pipeline:
                                                                  'unit': units[idx4]}
                     else:
                         self.log.add_entry("ERROR",
-                                           "Run #{}'s imfit failed. Please see"
+                                           "Run #{}'s imfit failed. Please see "
                                            "casa log, {}, for more details"
-                                           "".format(idx + 1, script.casafile))
+                                           "".format(idx + 1,
+                                                     run.rt_dcy + os.sep +
+                                                     script.casafile))
                         run.results['imfit'] = None
 
                 run.products['ms_noisy'] = fnl_noisy_ms

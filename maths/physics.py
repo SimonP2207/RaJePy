@@ -588,20 +588,20 @@ def tau_r_from_jm(jm, freq, r) -> float:
         Distance to tau = 1 surface from central object in arcsec
     """
     inc = jm.params['geometry']['inc']  # degrees
-    r_0 = jm.params['geometry']['r_0'] * con.au * 1e2  # cm
+    r_0 = jm.params['geometry']['r_0']  # au
     opang = jm.params['geometry']['opang']  # deg
-    w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
-    d = jm.params['target']['dist'] * con.parsec * 1e2  # cm
+    w_0 = jm.params['geometry']['w_0'] # au
+    d = jm.params['target']['dist']  # pc
     T_0 = jm.params['properties']['T_0']  # K
     n_0 = jm.params['properties']['n_0']  # cm^-3
     chi_0 = jm.params['properties']['x_0']  # dimensionless
     q_n = jm.params["power_laws"]["q_n"]  # dimensionless
     q_x = jm.params["power_laws"]["q_x"]  # dimensionless
     q_T = jm.params["power_laws"]["q_T"]  # dimensionless
-    epsilon = jm.params["geometry"]["epsilon"]
+    epsilon = jm.params["geometry"]["epsilon"]  # dimensionless
 
-    return tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x,
-                 q_T, opang, dist=d)
+    return tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc,
+                 epsilon, q_n, q_x, q_T, opang, dist=d)
 
 
 if __name__ == '__main__':
