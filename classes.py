@@ -3275,9 +3275,9 @@ class Pipeline:
 
         # Deal with cube images by averaging along the spectral (1st) axis
         if len(np.shape(flux)) == 3:
-            flux = np.shape(np.nanmean(flux, axis=0))
+            flux = np.nanmean(flux, axis=0)
         if len(np.shape(taus)) == 3:
-            taus = np.shape(np.nanmean(taus, axis=0))
+            taus = np.nanmean(taus, axis=0)
 
         csize_as = np.tan(self.model.csize * con.au / con.parsec /
                           self.model.params['target']['dist'])  # radians
