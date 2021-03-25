@@ -3223,7 +3223,7 @@ class Pipeline:
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=(6.65, 6.65))
 
-        self.model.jml_radio_plot(ax=ax)
+        self.model.jml_profile_plot(ax=ax)
 
         ax.set_xscale('log')
         ax.set_yscale('log')
