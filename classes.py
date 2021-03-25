@@ -3203,6 +3203,54 @@ class Pipeline:
                     metadata=pdf_metadata, dpi=300)
         return None
 
+    def jml_profile_plot(self, ax=None, savefig: bool = False):
+        """
+        Plot ejection profile using matlplotlib and overplot pipeline's
+        observational epochs
+
+        Parameters
+        ----------
+        ax : matplotlib.axes._axes.Axes
+            Axis to plot to
+
+        times : np.array of astropy.units.quantity.Quantity instances
+            Times to calculate mass loss rates at
+        Returns
+        -------
+        numpy.array giving mass loss rates
+
+        """
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(6.65, 6.65))
+
+        self.model.jml_radio_plot(ax=ax)
+
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+
+        ylims = ax.get_ylim()
+
+        t_cont = self.params['continuum']['times']
+        t_rrl = self.params['rrls']['times']
+
+        ts = set(np.append(t_rrl, t_cont))
+
+        # Plot continuum-only time as blue, rrl-only time as red and both as
+        # blue/red dashed line
+        for t in ts:
+            if t in t_cont:
+                ax.axvline(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='b')
+                if t in t_rrl:
+                    ax.axvline(t, ymin=ylims[0], ymax=ylims[1], ls='--',
+                               color='r')
+            else:
+                ax.axvline(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='r')
+
+        if savefig:
+            plt.savefig(savefig, bbox_inches='tight', dpi=300)
+
+        return None
+
     def radio_plot(self, run, percentile=5., savefig=False):
         """
         Generate 3 subplots of (from left to right) flux, optical depth and
