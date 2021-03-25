@@ -175,9 +175,9 @@ Jet geometry parameters
 | `"q_T"`       | Power-law coefficient for jet temperature as function of r                                | `float` | `-0.5`  |
 | `"q_x"`       | Power-law coefficient for jet ionisation fraction as function of r                        | `float` | `0.0`   |
 | `"q^d_n"`     | Cross-sectional power-law coefficient for jet number density as function of w             | `float` | `-2.0`  |
-| `"q^d_T"`     | Cross-sectional power-law coefficient for jet electron temperature as function of w       | `float` | `-2.0`  |
-| `"q^d_v"`     | Cross-sectional power-law coefficient for jet velocity as function of w                   | `float` | `-0.5`  |
-| `"q^d_x"`     | Cross-sectional power-law coefficient for jet ionisation fraction as function of w        | `float` | `-2.0`  |
+| `"q^d_T"`     | Cross-sectional power-law coefficient for jet electron temperature as function of w **[NOT IMPLEMENTED]** | `float` | `-2.0`  |
+| `"q^d_v"`     | Cross-sectional power-law coefficient for jet velocity as function of w             **[NOT IMPLEMENTED]** | `float` | `-0.5`  |
+| `"q^d_x"`     | Cross-sectional power-law coefficient for jet ionisation fraction as function of w  **[NOT IMPLEMENTED]** | `float` | `-2.0`  |
 
 ##### `params['properties']`
 Jet physical parameter values
@@ -185,7 +185,7 @@ Jet physical parameter values
 | Parameter/key | Description                                              | Type          | Example |
 |---------------|----------------------------------------------------------|---------------|---------|
 | `"v_0"`       | Jet initial velocity (km/s)                              | `float`       | `500.`  |
-| `"x_0"`       | Initial jet ionisation fraction (0 --> 1                 | `float`       | `0.1`   |
+| `"x_0"`       | Initial jet ionisation fraction (0 < x_0 <= 1)                | `float`       | `0.1`   |
 | `"n_0"`       | Initial jet number density (per cubic cm)                | `float`, None | `1e9`   |
 | `"T_0"`       | Initial jet temperature (K)                              | `float`       | `1e4`   |
 | `"mu"`        | Mean atomic weight of jet (hydrogen atom mass)           | `float`       | `1.3`   |
@@ -246,7 +246,7 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
                         'chanws': np.array([1e6, 1e6, 1e6, 1e6])},  # Hz
           }
 ```
-This shows a python `dict` containing 4 keys associated keys which are:
+This shows a python `dict` with 4 associated keys which are:
 
 | Parameter/key | Description                                                    | Type    | Example   |
 |---------------|----------------------------------------------------------------|---------|-----------|
@@ -358,8 +358,14 @@ The `execute` method runs the complete pipeline, producing relevant plots, `.fit
 | `resume`     | Whether to resume a previously saved run (if saved model file and saved pipeline file exist) | `bool` |
 | `clobber`    | Whether to redo and overwrite previously written files [soon to be deprecated]               | `bool` |
 
-### `casa.Script` class
+### `classes.ContinuumRun` class
+Abstract class containing all observational properties derived from pipeline param file, for a continuum run.
 
+### `classes.RRLRun` class
+Abstract class containing all observational properties derived from pipeline param file, for an RRL run. Child class of `ContinuumRun`.
+
+### `casa.Script` class
+Class containing all `casa` tasks to be executed with given parameters, in a defined order. Methods include `add_task` and `execute`. The latter method writes the `.py` file, based upon instance's parameter values,  which is executed via the command `casa --nogui --nologger --agg --logfile XXX.log -c XXX.py`.
 
 ### Use RaJePy as its own module to execute your own pipeline
 After creating instances of the `JetModel` and `Pipeline` classes, execution of the desired synthetic observations etc. takes place via the `Pipeline` class' `execute` method. A complete script for execution of a synthetic observing and model calculation run would be:
