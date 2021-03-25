@@ -3239,12 +3239,14 @@ class Pipeline:
         # blue/red dashed line
         for t in ts:
             if t in t_cont:
-                ax.axvline(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='b')
+                ax.vlines(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='b')
                 if t in t_rrl:
-                    ax.axvline(t, ymin=ylims[0], ymax=ylims[1], ls='--',
+                    ax.vlines(t, ymin=ylims[0], ymax=ylims[1], ls='--',
                                color='r')
             else:
-                ax.axvline(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='r')
+                ax.vlines(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='r')
+
+        ax.set_ylim(ylims)
 
         if savefig:
             plt.savefig(savefig, bbox_inches='tight', dpi=300)
