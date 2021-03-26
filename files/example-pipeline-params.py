@@ -15,7 +15,7 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
           'dcys':      {"model_dcy": os.sep.join([os.path.expanduser('~'),
                                                  "Desktop", "RaJePyTest"])},
           # Continuum observations
-          'continuum': {'times':  np.linspace(0., 5., 21)[:1],  # yr
+          'continuum': {'times':  np.linspace(0., 2., 20.),  # yr
                         'freqs':  np.array([0.058, 0.142, 0.323, 0.608,  # Hz
                                             1.5, 3.0, 6., 10., 22., 33.,
                                             43.])[-1:] * 1e9,

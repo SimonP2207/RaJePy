@@ -2724,7 +2724,7 @@ class Pipeline:
                 tscop, t_cfg = run.tscop
 
                 # Get antennae positions file's path
-                ant_list = casa.observatories.cfg_files[tscop][t_cfg]
+                ant_list = casa.observatories.tscop_info.cfg_files[tscop][t_cfg]
 
                 # Set frequency (of center channel) and channel width strings by
                 # using CASA default parameter values which set the channel
@@ -2735,7 +2735,7 @@ class Pipeline:
 
                 # Get hour-angle ranges above minimum elevation
                 min_el = self.params['min_el']
-                tscop_lat = casa.observatories.Lat[tscop]
+                tscop_lat = casa.observatories.tscop_info.Lat[tscop]
 
                 min_ha = tgt_c.ra.hour - 12.
                 if min_ha < 0: min_ha += 24.
