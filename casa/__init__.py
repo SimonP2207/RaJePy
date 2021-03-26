@@ -1,3 +1,3 @@
 from . import tasks
 from ._interface import *
-import ._observatories as observatories
+from . import _observatories as observatories
