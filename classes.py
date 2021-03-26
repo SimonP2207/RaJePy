@@ -1964,10 +1964,17 @@ class JetModel:
         jmls = self._jml_t(times)
 
         if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=(6.65, 6.65))
+            fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
+                                                  cfg.plots['dims']['column']))
 
         ax.plot(times / con.year, jmls * con.year / 1.98847e30, ls='-',
-                color='cornflowerblue')
+                color='blue', lw=2, zorder=3, label=r'$\dot{m}_{\rm jet}$')
+
+        xlims = ax.get_xlim()
+
+        ax.axhline(self._ss_jml * con.year / 1.98847e30, 0, 1, ls=':',
+                   color='red', lw=2, zorder=2,
+                   label=r'$\dot{m}_{\rm jet}^{\rm ss}$')
 
         xunit = u.format.latex.Latex(times).to_string(u.year)
         yunit = u.format.latex.Latex(jmls).to_string(u.solMass * u.year ** -1)
@@ -1981,7 +1988,7 @@ class JetModel:
         if savefig:
             plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
-        return None
+        return ax, times, jmls
 
 
 class ContinuumRun:
@@ -2572,6 +2579,7 @@ class Pipeline:
                 self.model = JetModel.load_model(self.model_file)
 
         for idx, run in enumerate(self.runs):
+            self.model.time = run.year * con.year
             self.log.add_entry(mtype="INFO",
                                entry="Executing run #{} -> Details:\n{}"
                                      "".format(idx + 1, run.__str__()))
@@ -3220,38 +3228,43 @@ class Pipeline:
         numpy.array giving mass loss rates
 
         """
-        if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=(6.65, 6.65))
-
-        self.model.jml_profile_plot(ax=ax)
-
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-
-        ylims = ax.get_ylim()
-
         t_cont = self.params['continuum']['times']
         t_rrl = self.params['rrls']['times']
 
         ts = set(np.append(t_rrl, t_cont))
+        jmls = [self.model.jml_t(t * con.year) * 1.58552e-23 for t in ts]
 
-        # Plot continuum-only time as blue, rrl-only time as red and both as
-        # blue/red dashed line
-        for t in ts:
-            if t in t_cont:
-                ax.vlines(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='b')
-                if t in t_rrl:
-                    ax.vlines(t, ymin=ylims[0], ymax=ylims[1], ls='--',
-                               color='r')
-            else:
-                ax.vlines(t, ymin=ylims[0], ymax=ylims[1], ls='-', color='r')
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
+                                                  cfg.plots['dims']['column']))
 
+        _, times, __ = self.model.jml_profile_plot(ax=ax)
+
+        xlims = 0, np.nanmax(times / con.year)
+        ax.set_yscale('log')
+
+        ylims = (10 ** np.floor(np.log10(np.nanmin(jmls))),
+                 10 ** np.ceil(np.log10(np.nanmax(jmls))))
+
+        # Plot continuum-only time as down-marker, rrl-only time as up-marker
+        # and both as full line
+        for i, t in enumerate(ts):
+            ax.plot([t, t], [jmls[i], ylims[0]], ls='-', lw=.5,
+                    color='cornflowerblue', zorder=1,
+                    label=r'$t_{\rm obs}$' if i == 0 else None)
+
+        ax.set_xlim(xlims)
         ax.set_ylim(ylims)
+
+        ax.legend(loc=1)
+        ax.minorticks_on()
+        ax.tick_params(which='both', axis='both', direction='in',
+                       bottom=True, top=True, left=True, right=True)
 
         if savefig:
             plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
-        return None
+        return ax
 
     def radio_plot(self, run, percentile=5., savefig=False):
         """
@@ -3491,6 +3504,60 @@ class PointingScheme(object):
 if __name__ == '__main__':
     from RaJePy.classes import JetModel, Pipeline
     import RaJePy as rjp
+    import matplotlib.pylab as plt
+    from uncertainties import ufloat as uf
+    from uncertainties import umath as um
 
-    pline = Pipeline.load_pipeline('/Users/simon/Dropbox/Paper_RadioRT/Results'
-                                   '/TestModel1/modelrun.save')
+    pline = Pipeline.load_pipeline('/mnt/purser_data/RaJePy/LM-N-XW/modelrun.save')
+
+    runs_cmpltd = np.array(pline.runs)[[_.completed for _ in pline.runs]]
+    epochs = list(set([_.day for _ in runs_cmpltd]))
+    epochs.sort()
+
+    data = {e: {} for e in epochs}
+
+    for prun in runs_cmpltd:
+        d = prun.day
+        nu = prun.freq
+        data[d][nu] = {}
+        flux = uf(prun.results['imfit']['I']['val'],
+                  prun.results['imfit']['Ierr']['val'])
+        flux = uf(prun.results['imfit']['Peak']['val'],
+                  prun.results['imfit']['PeakErr']['val'])
+        flux = uf(prun.results['flux'], 0.)
+        tmaj = uf(prun.results['imfit']['DeconMaj']['val'],
+                  prun.results['imfit']['DeconMajErr']['val'])
+        if tmaj < 1e-10:
+            tmaj = uf(float('NaN'), float('NaN'))
+        data[d][nu]['flux'] = flux
+        data[d][nu]['tmaj'] = tmaj
+    
+
+    
+
+    plt.close('all')
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+    for epoch in data:
+        freqs = [freq for freq in data[epoch]]
+        fluxes = [data[epoch][freq]['flux'] for freq in freqs]
+        tmajs = [data[epoch][freq]['tmaj'] for freq in freqs]
+        ax1.plot(freqs, [f.n for f in fluxes], ls='None', marker='o', label=f'Day {epoch}')
+        ax2.plot(freqs, [t.n for t in tmajs], ls='None', marker='o', label=f'Day {epoch}')
+
+    for ax in (ax1, ax2):
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+
+    xs = np.logspace(*np.log10(ax1.get_xlim()), 100)
+    ys = []
+    jet_params = pline.model.params
+    for freq in xs:
+        ys.append(rjp.mphys.flux_expected_r86(pline.model, freq,
+                                              jet_params['grid']['l_z'] / 2.)
+                  * 2.)
+
+    ax1.plot(xs, ys, 'r-')
+
+    plt.show()
