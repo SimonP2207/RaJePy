@@ -30,7 +30,7 @@ params = {
     "geometry": {"epsilon": 9. / 9.,  # Jet width index
                  "opang": 30.,  # Jet opening angle (deg)
                  "w_0": 2.5,  # Half-width of jet base (au)
-                 "r_0": 1.,  # Launching radius (au)
+                 "r_0": 2.5,  # Launching radius (au)
                  "inc": 90.,  # Inclination angle (deg)
                  "pa": 0.,  # Jet position PA (deg)
                  },
@@ -49,8 +49,8 @@ params = {
                    "mu": 1.3,  # Mean atomic weight (m_H)
                    "mlr": 1e-5,  # Msol / yr
                    },
-    "ejection": {"t_0": np.array([145.]),  # Peak times of bursts (yr)
-                 "hl": np.array([0.1]),  # Half-lives of bursts (yr)
+    "ejection": {"t_0": np.array([1.]),  # Peak times of bursts (yr)
+                 "hl": np.array([0.2]),  # Half-lives of bursts (yr)
                  "chi": np.array([10.]),  # Burst factors
                  }
              }
