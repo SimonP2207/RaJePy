@@ -3075,26 +3075,33 @@ class Pipeline:
             self.runs[idx].completed = True
 
         for year in self.params["continuum"]['times']:
-            self.plot_fluxes(year)
+            self.plot_continuum_fluxes(year, savefig=True)
 
         self.save(self.save_file)
         self.model.save(self.model_file)
 
         return None  # self.runs[idx]['products']
 
-    def plot_fluxes(self, plot_time, plot_reynolds=True,
-                    figsize=[cfg.plots["dims"]["column"]] * 2):
+    def plot_continuum_fluxes(self, plot_time : float,
+                              plot_reynolds : bool = True,
+                              savefig : bool = False) -> None:
         freqs, fluxes = [], []
+        freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
         for idx, run in enumerate(self.runs):
             if run.year == plot_time:
-                if run.completed:
-                    #flux_data = fits.open(run.fits_flux)[0].data[0]
+                if run.completed and run.obs_type == 'continuum':
+                    # Skymodel fluxes
                     flux = run.results['flux']
-                else:
-                    flux_data = self.model.flux_ff(run.freq)
-                    flux = np.nansum(np.nanmean(flux_data, axis=0))
-                fluxes.append(flux)
-                freqs.append(run.freq)
+                    fluxes.append(flux)
+                    freqs.append(run.freq)
+
+                    # imfit fluxes
+                    if run.results['imfit'] is not None:
+                        flux_imfit = run.results['imfit']['I']['val']
+                        eflux_imfit = run.results['imfit']['Ierr']['val']
+                        fluxes_imfit.append(flux_imfit)
+                        efluxes_imfit.append(eflux_imfit)
+                        freqs_imfit.append(run.freq)
 
         freqs = np.array(freqs)
         fluxes = np.array(fluxes)
@@ -3108,12 +3115,22 @@ class Pipeline:
                                    fluxes[n - 1]) /
                           np.log10(freqs[n] / freqs[n - 1]))
 
+        alphas_imfit, ealphas_imfit = [], []
+        for n in np.arange(1, len(fluxes_imfit)):
+            alphas_imfit.append(np.log10(fluxes_imfit[n] /
+                                         fluxes_imfit[n - 1]) /
+                                np.log10(freqs_imfit[n] / freqs_imfit[n - 1]))
+            c = np.log(freqs_imfit[n] / freqs_imfit[n - 1])
+            ealpha = np.sqrt((efluxes_imfit[n] / (fluxes_imfit[n] * c)) ** 2. +
+                             (efluxes_imfit[n - 1] / (fluxes_imfit[n - 1] * c)) ** 2.)
+            ealphas_imfit.append(ealpha)
+
         l_z = self.model.nz * self.model.csize /\
               self.model.params['target']['dist']
 
         plt.close('all')
 
-        fig, ax1 = plt.subplots(1, 1, figsize=figsize)
+        fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
         ax2 = ax1.twinx()
 
         # Alphas are calculated at the middle of two neighbouring frequencies
@@ -3121,8 +3138,14 @@ class Pipeline:
         # the logarithmic mean of the two frequencies
         freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
                    enumerate(freqs[:-1])]
+        freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for i, f in
+                         enumerate(freqs_imfit[:-1])]
+
         ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
                  mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
+
+        ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
+                     ls='None', capsize=2)
 
         freqs_r86 = np.logspace(np.log10(np.min(xlims)),
                                 np.log10(np.max(xlims)), 100)
@@ -3163,6 +3186,9 @@ class Pipeline:
 
         ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
                    zorder=3, marker='o', markersize=5)
+        ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
+                     ls='None', capsize=2)
+
         if plot_reynolds:
             ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
                        zorder=1)
@@ -3201,14 +3227,15 @@ class Pipeline:
         pdf_metadata = cfg.plots['metadata']['pdf']
         pdf_metadata["Title"] = title
 
-        self.log.add_entry("INFO",
-                           "Saving radio SED figure to {} for time {}yr"
-                           "".format(save_file.replace('png', '(png,pdf)'),
-                                     plot_time))
-        fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata,
-                    dpi=300)
-        fig.savefig(save_file.replace('png', 'pdf'), bbox_inches='tight',
-                    metadata=pdf_metadata, dpi=300)
+        if savefig:
+            self.log.add_entry("INFO",
+                               "Saving radio SED figure to {} for time {}yr"
+                               "".format(save_file.replace('png', '(png,pdf)'),
+                                         plot_time))
+            fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata,
+                        dpi=300)
+            fig.savefig(save_file.replace('png', 'pdf'), bbox_inches='tight',
+                        metadata=pdf_metadata, dpi=300)
         return None
 
     def jml_profile_plot(self, ax=None, savefig: bool = False):
@@ -3293,7 +3320,8 @@ class Pipeline:
 
         plt.close('all')
 
-        fig = plt.figure(figsize=(6.65, 6.65 / 2))
+        fig = plt.figure(figsize=(cfg.plots['dims']['text'],
+                                  cfg.plots['dims']['column']))
 
         # Set common labels
         fig.text(0.5, 0.0, r'$\Delta\alpha\,\left[^{\prime\prime}\right]$',
@@ -3517,21 +3545,22 @@ if __name__ == '__main__':
     data = {e: {} for e in epochs}
 
     for prun in runs_cmpltd:
-        d = prun.day
-        nu = prun.freq
-        data[d][nu] = {}
-        flux = uf(prun.results['imfit']['I']['val'],
-                  prun.results['imfit']['Ierr']['val'])
-        flux = uf(prun.results['imfit']['Peak']['val'],
-                  prun.results['imfit']['PeakErr']['val'])
-        flux = uf(prun.results['flux'], 0.)
-        tmaj = uf(prun.results['imfit']['DeconMaj']['val'],
-                  prun.results['imfit']['DeconMajErr']['val'])
-        if tmaj < 1e-10:
-            tmaj = uf(float('NaN'), float('NaN'))
-        data[d][nu]['flux'] = flux
-        data[d][nu]['tmaj'] = tmaj
-    
+        if prun.results['imfit'] is not None:
+            d = prun.day
+            nu = prun.freq
+            data[d][nu] = {}
+            flux = uf(prun.results['imfit']['I']['val'],
+                      prun.results['imfit']['Ierr']['val'])
+            #flux = uf(prun.results['imfit']['Peak']['val'],
+            #          prun.results['imfit']['PeakErr']['val'])
+            #flux = uf(prun.results['flux'], 0.)
+            tmaj = uf(prun.results['imfit']['DeconMaj']['val'],
+                      prun.results['imfit']['DeconMajErr']['val'])
+            if tmaj < 1e-10:
+                tmaj = uf(float('NaN'), float('NaN'))
+            data[d][nu]['flux'] = flux
+            data[d][nu]['tmaj'] = tmaj
+        
 
     
 
@@ -3543,8 +3572,8 @@ if __name__ == '__main__':
         freqs = [freq for freq in data[epoch]]
         fluxes = [data[epoch][freq]['flux'] for freq in freqs]
         tmajs = [data[epoch][freq]['tmaj'] for freq in freqs]
-        ax1.plot(freqs, [f.n for f in fluxes], ls='None', marker='o', label=f'Day {epoch}')
-        ax2.plot(freqs, [t.n for t in tmajs], ls='None', marker='o', label=f'Day {epoch}')
+        ax1.plot(freqs, [f.n for f in fluxes], ls='-', marker='o', label=f'Day {epoch}')
+        ax2.plot(freqs, [t.n for t in tmajs], ls='-', marker='o', label=f'Day {epoch}')
 
     for ax in (ax1, ax2):
         ax.set_xscale('log')
