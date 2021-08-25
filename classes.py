@@ -21,13 +21,13 @@ import tabulate
 import numpy as np
 import astropy.units as u
 import scipy.constants as con
-import matplotlib.pylab as plt
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from shutil import get_terminal_size
 from matplotlib.colors import LogNorm
+import matplotlib.pylab as plt
 
-from RaJePy import cnsts as rjpcnsts
+from RaJePy import cnsts
 from RaJePy import logger
 from RaJePy import _config as cfg
 from RaJePy.maths import geometry as mgeom
@@ -41,6 +41,7 @@ from warnings import filterwarnings
 filterwarnings("ignore", category=RuntimeWarning)
 
 
+# noinspection PyCallingNonCallable
 class JetModel:
     """
     Class to handle physical model of an ionised jet from a young stellar object
@@ -88,17 +89,16 @@ class JetModel:
 
         return new_jm
 
-    def __init__(self, params: Union[dict, str], verbose: bool = True,
-                 log=None):
+    def __init__(self, params: Union[dict, str], log=Union[None, logger.Log]):
         """
 
         Parameters
         ----------
         params : dict
-            dictionary containing all necessary parameters for run of TORCH
-
-        verbose : bool
-            verbosity in terminal. True for verbosity, False for silence
+            dictionary containing all necessary parameters to describe
+            physical jet model
+        log: logger.Log
+            Log instance to handle all log messages
         """
         # Import jet parameters
         if isinstance(params, dict):
@@ -127,7 +127,7 @@ class JetModel:
         if log is not None:
             self._log = log
         else:
-            self._log = logger.Log(os.path.expanduser('~') +  os.sep +
+            self._log = logger.Log(os.path.expanduser('~') + os.sep +
                                    'temp.log', verbose=True)
 
         # Determine number of cells in x, y, and z-directions
@@ -144,7 +144,7 @@ class JetModel:
             rot_y = np.array([[np.cos(pa), 0., np.sin(pa)],
                               [0., 1., 0.],
                               [-np.sin(pa), 0., np.cos(pa)]])
-            rmax_cells = r_z / 2. * self.params['target']['dist'] /\
+            rmax_cells = r_z / 2. * self.params['target']['dist'] / \
                          self.params["grid"]["c_size"]
             wmax = mgeom.w_r(rmax_cells * self.params["grid"]["c_size"],
                              self.params["geometry"]["w_0"],
@@ -161,7 +161,8 @@ class JetModel:
             for aspect in pos.keys():
                 p = rot_x.dot(rot_y.dot(pos[aspect]))
                 p = [int(_) + 1 for _ in p]
-                pos[aspect] = [_ if _ % 2 == 0 else _ + 1 * np.sign(_) for _ in p]
+                pos[aspect] = [_ if _ % 2 == 0 else _ + 1 * np.sign(_) for _ in
+                               p]
 
             nx, ny, nz = (pos['right'][0],
                           pos['rear'][1],
@@ -195,10 +196,16 @@ class JetModel:
         self._rr = None  # grid of cell-centre r-coordinates
         self._ww = None  # grid of cell-centre w-coordinates
         self._pp = None  # grid of cell-centre phi-coordinates
-
+        self._rreff = None  # grid of cell-centre r_eff-coordinates
+        self._ts = None  # grid of cell-material times since launch
+        self._m = None  # grid of cell-masses
+        self._nd = None  # grid of cell number densities
+        self._xi = None  # grid of cell ionisation fractions
+        self._temp = None  # grid of cell temperatures
+        self._v = None  # 3-tuple of cell x, y and z velocity components
 
         mlr = self.params['properties']['n_0'] * 1e6 * np.pi  # m^-3
-        mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H") # kg/m^3
+        mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H")  #kg/m^3
         mlr *= (self.params['geometry']['w_0'] * con.au) ** 2.  # kg/m
         mlr *= self.params['properties']['v_0'] * 1e3  # kg/s
 
@@ -207,8 +214,9 @@ class JetModel:
         # Function to return jet mass loss rate at any time
         def func(jml):
             def func2(t):
-                "Mass loss rate as function of time"
-                return jml
+                """Mass loss rate as function of time"""
+                return jml + t * 0.
+
             return func2
 
         self._jml_t = func(self._ss_jml)  # JML as function of time function
@@ -315,7 +323,8 @@ class JetModel:
         return s
 
     @property
-    def time(self):
+    def time(self) -> float:
+        """Model time in seconds"""
         return self._time
 
     @time.setter
@@ -323,7 +332,9 @@ class JetModel:
         self._time = new_time
 
     @property
-    def jml_t(self):
+    def jml_t(self) -> Callable:
+        """Callable for jet-mass loss rate as a function of time, which is
+        the callable's sole arg"""
         return self._jml_t
 
     @jml_t.setter
@@ -350,15 +361,15 @@ class JetModel:
 
         """
 
-        def func(fnc, t_0, peak_jml, half_life):
+        def func(fnc, _t_0, _peak_jml, _half_life):
             """
 
             Parameters
             ----------
             fnc : Time dependent function giving current jet mass loss rate
-            t_0 : Time of peak of burst
-            peak_jml : Peak of burst's jet mass loss rate
-            half_life : FWHM of burst
+            _t_0 : Time of peak of burst
+            _peak_jml : Peak of burst's jet mass loss rate
+            _half_life : FWHM of burst
 
             Returns
             -------
@@ -369,9 +380,9 @@ class JetModel:
 
             def func2(t):
                 """Gaussian profiled ejection event"""
-                amp = peak_jml - self._ss_jml
-                sigma = half_life * 2. / (2. * np.sqrt(2. * np.log(2.)))
-                return fnc(t) + amp * np.exp(-(t - t_0) ** 2. /
+                amp = _peak_jml - self._ss_jml
+                sigma = _half_life * 2. / (2. * np.sqrt(2. * np.log(2.)))
+                return fnc(t) + amp * np.exp(-(t - _t_0) ** 2. /
                                              (2. * sigma ** 2.))
 
             return func2
@@ -383,6 +394,10 @@ class JetModel:
 
     @property
     def grid(self) -> np.ndarray:
+        """
+        Array of cell grid coordinates (in au) of shape (nx, ny, nz).
+        Coordinates are of the bottom, left corner for the cells and in au.
+        """
         if self._grid:
             return self._grid
         self._grid = np.meshgrid(np.linspace(-self.nx / 2 * self.csize,
@@ -403,10 +418,103 @@ class JetModel:
         self._grid = new_grid
 
     @property
-    def fill_factor(self):
+    def rr(self) -> np.ndarray:
+        """Grid of cells' centroids' r coordinates in au"""
+        if self._rr is not None:
+            return self._rr
+        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
+                                      self.grid[1] + self.csize / 2.,
+                                      self.grid[2] + self.csize / 2.,
+                                      self.params["geometry"]["inc"],
+                                      self.params["geometry"]["pa"])
+        self._rr = rr
+
+        if self._ww is None:
+            self._ww = ww
+
+        if self._pp is None:
+            self._pp = pp
+
+        return self._rr
+
+    @property
+    def ww(self) -> np.ndarray:
+        """Grid of cells' centroids' w coordinates in au"""
+        if self._ww is not None:
+            return self._ww
+        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
+                                      self.grid[1] + self.csize / 2.,
+                                      self.grid[2] + self.csize / 2.,
+                                      self.params["geometry"]["inc"],
+                                      self.params["geometry"]["pa"])
+        self._ww = ww
+
+        if self._rr is None:
+            self._rr = rr
+
+        if self._pp is None:
+            self._pp = pp
+
+        return self._ww
+
+    @property
+    def pp(self) -> np.ndarray:
+        """Grid of cells' centroids' phi coordinates in radians"""
+        if self._pp is not None:
+            return self._pp
+        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
+                                      self.grid[1] + self.csize / 2.,
+                                      self.grid[2] + self.csize / 2.,
+                                      self.params["geometry"]["inc"],
+                                      self.params["geometry"]["pa"])
+        self._pp = pp
+
+        if self._ww is None:
+            self._ww = ww
+
+        if self._rr is None:
+            self._rr = rr
+
+        return self._pp
+
+    @property
+    def rreff(self) -> np.ndarray:
+        """Grid of cells' centroids' effective accretion disc radii in au"""
+        if self._rreff is not None:
+            return self._rreff
+
+        r_0 = self.params['geometry']['r_0']
+        r = np.abs(self.rr)
+        # r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+        #              (r_0 + r + self.csize / 2.) / 2., r)
+
+        self._rreff = mgeom.r_eff(self.ww, self.params["target"]["R_1"],
+                                  self.params["target"]["R_2"],
+                                  self.params['geometry']['w_0'],
+                                  r, self.params['geometry']['mod_r_0'],
+                                  self.params['geometry']['r_0'],
+                                  self.params["geometry"]["epsilon"])
+
+        return self._rreff
+
+    @property
+    def xs(self) -> np.ndarray:
+        return self.grid[0][0][::, 0]
+
+    @property
+    def ys(self) -> np.ndarray:
+        return self.grid[1][::, 0][::, 0]
+
+    @property
+    def zs(self) -> np.ndarray:
+        return self.grid[2][0][0]
+
+    @property
+    def fill_factor(self) -> np.ndarray:
         """
         Calculate the fraction of each of the grid's cells falling within the
-        jet, or 'fill factors'
+        jet's hard boundary define by w(r) (see RaJePy.maths.geometry.w_r
+        method), or 'fill factors'
         """
         if self._ff is not None:
             return self._ff
@@ -444,7 +552,7 @@ class JetModel:
                 elif refl_sym_y is True:
                     xx, yy, zz = [_[:, int(self.ny / 2):, :] for _ in self.grid]
                 else:
-                    err_msg = u"Grid symmetry not understood for i = {:.0f}"\
+                    err_msg = u"Grid symmetry not understood for i = {:.0f}" \
                               u"\u00B0 and \u03B8={:.0f}\u00B0"
                     err_msg = err_msg.format(self.params["geometry"]["inc"],
                                              self.params["geometry"]["pa"])
@@ -468,7 +576,6 @@ class JetModel:
         r_0 = self.params['geometry']['r_0']
         mod_r_0 = self.params['geometry']['mod_r_0']
         eps = self.params['geometry']['epsilon']
-        oa = self.params['geometry']['opang']
         inc = self.params['geometry']['inc']
         pa = self.params['geometry']['pa']
         cs = self.csize
@@ -487,6 +594,7 @@ class JetModel:
                     x, y = xx[idxy][idxx][idxz], yy[idxy][idxx][idxz]
 
                     # Skip if definitely outside jet boundary
+                    # Cell centroid r, w and phi coordinates
                     r, w, phi = mgeom.xyz_to_rwp(x + cs / 2., y + cs / 2.,
                                                  z + cs / 2., inc, pa)
                     wr = mgeom.w_r(np.abs(r), w_0, mod_r_0, r_0, eps)
@@ -504,8 +612,9 @@ class JetModel:
                                       (x, y + cs, z + cs),
                                       (x + cs, y + cs, z + cs)])
 
-                    r, w, phi = mgeom.xyz_to_rwp(verts[::,0], verts[::,1],
-                                                 verts[::,2], inc, pa)
+                    # Cell-vertices' r, w and phi coordinates
+                    r, w, phi = mgeom.xyz_to_rwp(verts[::, 0], verts[::, 1],
+                                                 verts[::, 2], inc, pa)
                     wr = mgeom.w_r(np.abs(r), w_0, mod_r_0, r_0, eps)
                     verts_inside = (w <= wr) & (np.abs(r) >= r_0)
 
@@ -515,13 +624,12 @@ class JetModel:
                         ff = 1.
                         area = 1.
                     else:
-                        # Take average values for fill factor/projected areas
-                        ff = 0.5
-                        area = 1.0
-
                         # TODO: Cells at base of jet need to accommodate for
                         #  r_0 properly. Value of 0.5 for ff and area will
                         #  not do
+                        # Take average values for fill factor/projected areas
+                        ff = .5
+                        area = 1.0
 
                     ffs[idxy][idxx][idxz] = ff
                     areas[idxy][idxx][idxz] = area
@@ -556,9 +664,9 @@ class JetModel:
                                 time.gmtime(now - then)))
 
         # Reflect in x, y and z axes
-        for ax in refl_axes:
-            ffs = np.append(np.flip(ffs, axis=ax), ffs, axis=ax)
-            areas = np.append(np.flip(areas, axis=ax), areas, axis=ax)
+        for axis in refl_axes:
+            ffs = np.append(np.flip(ffs, axis=axis), ffs, axis=axis)
+            areas = np.append(np.flip(areas, axis=axis), areas, axis=axis)
 
         # Included as there are some, presumed floating point errors giving
         # fill factors of ~1e-15 on occasion
@@ -571,11 +679,11 @@ class JetModel:
         return self._ff
 
     @fill_factor.setter
-    def fill_factor(self, new_ffs):
+    def fill_factor(self, new_ffs: np.ndarray):
         self._ff = new_ffs
 
     @property
-    def areas(self):
+    def areas(self) -> Union[None, np.ndarray]:
         """
         Areas of jet-filled portion of cells as projected on to the y-axis
         (hopefully, custom orientations will address this so area is as
@@ -589,24 +697,13 @@ class JetModel:
         return self._areas
 
     @areas.setter
-    def areas(self, new_areas):
+    def areas(self, new_areas: np.ndarray):
         self._areas = new_areas
-
-    def save(self, filename):
-        ps = {'params': self._params,
-              'areas': None if self._areas is None else self.areas,
-              'ffs': None if self._ff is None else self.fill_factor,
-              'time': self.time, 
-              'log': self.log}
-        self.log.add_entry("INFO", "Saving physical model to "
-                                   "{}".format(filename))
-        pickle.dump(ps, open(filename, "wb"))
-        return None
 
     @property
     def mass(self):
-        if hasattr(self, '_m'):
-            return self._m * self.chi_xyz
+        if self._m is not None:
+            return self._m
 
         w_0 = self.params['geometry']['w_0'] / self.params['grid']['c_size']
         r_0 = self.params['geometry']['r_0'] / self.params['grid']['c_size']
@@ -642,313 +739,173 @@ class JetModel:
 
             ms[:, :, idz] = ms_zlayer
 
-        ms = np.where(self.fill_factor > 0, ms, np.NaN)
+        ms = (self.number_density * (self.csize * con.au * 1e2) ** 3. *
+              self.params['properties']['mu'] * mphys.atomic_mass('H') *
+              self.fill_factor)
 
+        ms = np.where(self.fill_factor > 0, ms, np.NaN)
         self.mass = ms
-        return self._m * self.chi_xyz
+
+        return self._m
 
     @mass.setter
-    def mass(self, new_ms):
-        self._m = new_ms * self.chi_xyz
+    def mass(self, new_ms: np.ndarray):
+        self._m = new_ms
+
+    # @property
+    # def chi_xyz(self) -> np.ndarray:
+    #     """
+    #     Chi factor (the burst factor) as a function of position.
+    #     """
+    #     r = np.abs(self.rr)
+    #     a = r - 0.5 * self.csize
+    #     b = r + 0.5 * self.csize
+    #
+    #     a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
+    #     b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
+    #
+    #     a = np.where(a <= self.params['geometry']['r_0'],
+    #                  self.params['geometry']['r_0'], a)
+    #
+    #     r *= con.au
+    #     a *= con.au
+    #     b *= con.au
+    #
+    #     # def t_r(r):
+    #     #     """
+    #     #     Time as a function of r. Defined purely for informative purposes
+    #     #     """
+    #     #     r_0 = self.params['geometry']['r_0'] * con.au
+    #     #     v_0 = self.params['properties']['v_0'] * 1000
+    #     #     q_v = self.params['power_laws']['q_v']
+    #     #     return (r_0 ** q_v * r ** (1. - q_v) - r_0) / (v_0 * (1. - q_v))
+    #
+    #     def int_t_r(_r):
+    #         """
+    #         Integral of t_r defined above for use in average value finding
+    #         """
+    #         r_0 = self.params['geometry']['r_0'] * con.au
+    #         v_0 = self.params['properties']['v_0'] * 1000.
+    #         q_v = self.params['power_laws']['q_v']
+    #         num = r_0 ** q_v * _r ** (2. - q_v) + (q_v - 2.) * r_0 * _r
+    #         den = v_0 * (q_v - 2.) * (q_v - 1.)
+    #         return num / den
+    #
+    #     av_ts = 1. / (b - a)
+    #     av_ts *= int_t_r(b) - int_t_r(a)
+    #
+    #     # So that times start at 0 at r_0 and to progress to current model time
+    #     av_ts = self.time - av_ts
+    #
+    #     av_ts = np.where(self.fill_factor > 0, av_ts, np.NaN)
+    #
+    #     av_chis = self._jml_t(av_ts) / self._ss_jml
+    #
+    #     return av_chis
 
     @property
-    def chi_xyz(self):
+    def ts(self) -> np.ndarray:
+        """
+        Time from launch of material in cell compared to current model time in
+        seconds
+        """
+        if self._ts is not None:
+            return self.time - self._ts
+
+        r_0 = self.params['geometry']['r_0']
+        r = np.abs(self.rr)
+        r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+                     (r_0 + r + self.csize / 2.) / 2., r)
+
+        ts = mgeom.t_rw(r, self.ww, self.params) * con.year
+        self.ts = ts
+
+        return self.ts
+
+    @ts.setter
+    def ts(self, new_ts: np.ndarray):
+        self._ts = new_ts
+
+    @property
+    def chi_xyz(self) -> np.ndarray:
         """
         Chi factor (the burst factor) as a function of position.
         """
-        r = np.abs(self.rr)
-        a = r - 0.5 * self.csize
-        b = r + 0.5 * self.csize
-
-        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
-        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
-
-        a = np.where(a <= self.params['geometry']['r_0'],
-                     self.params['geometry']['r_0'], a)
-
-        r *= con.au
-        a *= con.au
-        b *= con.au
-
-        def t_r(r):
-            """
-            Time as a function of r. Defined purely for informative purposes
-            """
-            r_0 = self.params['geometry']['r_0'] * con.au
-            v_0 = self.params['properties']['v_0'] * 1000
-            q_v = self.params['power_laws']['q_v']
-            return (r_0 ** q_v * r ** (1. - q_v) - r_0) / (v_0 * (1. - q_v))
-
-        def int_t_r(r):
-            """
-            Integral of t_r defined above for use in average value finding
-            """
-            r_0 = self.params['geometry']['r_0'] * con.au
-            v_0 = self.params['properties']['v_0'] * 1000.
-            q_v = self.params['power_laws']['q_v']
-            num = r_0 ** q_v * r ** (2. - q_v) + (q_v - 2.) * r_0 * r
-            den = v_0 * (q_v - 2.) * (q_v - 1.)
-            return num / den
-
-        av_ts = 1. / (b - a)
-        av_ts *= int_t_r(b) - int_t_r(a)
-
-        # So that times start at 0 at r_0 and to progress to current model time
-        av_ts = self.time - av_ts
-
-        av_ts = np.where(self.fill_factor > 0, av_ts, np.NaN)
-
-        av_chis = self._jml_t(av_ts) / self._ss_jml
-
-        return av_chis
-
-    def plot_mass_volume_slices(self):
-        """
-        Plot mass and volume slices as check for consistency (i.e. mass/volume
-        are conserved).
-        """
-        def m_slice(a, b):
-            """Mass of slice over the interval from a --> b in z,
-            in kg calculated from model parameters"""
-            n_0 = self.params["properties"]["n_0"] * 1e6
-            mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
-            r_0 = self.params["geometry"]["r_0"] * con.au
-            q_n = self.params["power_laws"]["q_n"]
-            w_0 = self.params["geometry"]["w_0"] * con.au
-            eps = self.params["geometry"]["epsilon"]
-            mu = self.params['properties']['mu'] * mphys.atomic_mass("H")
-
-            def indef_integral(z):
-                """Volume of slice over the interval from a --> b in z,
-                in m^3 calculated from model parameters"""
-                c = 1 + q_n + 2. * eps
-                num_p1 = mu * np.pi * mod_r_0 * n_0 * w_0 ** 2.
-                num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
-
-                return num_p1 * num_p2 / c
-
-            return indef_integral(b) - indef_integral(a)
-
-        def v_slice(a, b):
-            """Volume of slice over the interval from a --> b in z, in m^3"""
-            mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
-            r_0 = self.params["geometry"]["r_0"] * con.au
-            w_0 = self.params["geometry"]["w_0"] * con.au
-            eps = self.params["geometry"]["epsilon"]
-
-            def indef_integral(z):
-                c = 1 + 2. * eps
-                num_p1 = np.pi * mod_r_0 * w_0 ** 2.
-                num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
-
-                return num_p1 * num_p2 / c
-
-            return indef_integral(b) - indef_integral(a)
-
-        a = np.abs(self.zs + self.csize / 2) - self.csize / 2
-        b = np.abs(self.zs + self.csize / 2) + self.csize / 2
-
-        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
-        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
-        a = np.where(a <= self.params['geometry']['r_0'],
-                     self.params['geometry']['r_0'], a)
-
-        a *= con.au
-        b *= con.au
-
-        # Use the above functions to calculate what each slice's mass should be
-        mslices_calc = m_slice(a, b)
-        vslices_calc = v_slice(a, b)
-
-        # Calculate cell volumes and slice volumes
-        vcells = self.fill_factor * (self.csize * con.au)**3.
-        vslices = np.nansum(np.nansum(vcells, axis=1), axis=1)
-
-        # Calculate mass density of cells (in kg m^-3)
-        mdcells = self.number_density * self.params['properties']['mu'] *\
-                  mphys.atomic_mass("H") * 1e6
-
-        # Calculate cell masses
-        mcells = mdcells * vcells
-
-        # Sum cell masses to get slice masses
-        mslices = np.nansum(np.nansum(mcells, axis=1), axis=1)
-
-        vslices_calc /= con.au**3.
-        mslices_calc /= rjpcnsts.MSOL
-        vslices /= con.au**3.
-        mslices /= rjpcnsts.MSOL
-
-        verrs = vslices - vslices_calc
-        merrs = mslices - mslices_calc
-
-        vratios = vslices / vslices_calc
-        mratios = mslices / mslices_calc
-
-        # Average z-value for each slice
-        zs = np.mean([a, b], axis=1) / con.au
-        zs *= np.sign(self.zs + self.csize / 2)
-
-        plt.close('all')
-
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True,
-                                       figsize=[cfg.plots["dims"]["column"],
-                                         cfg.plots["dims"]["column"] * 2])
-
-        ax1b = ax1.twinx()
-        ax2b = ax2.twinx()
-        ax1b.sharey(ax2b)
-
-        ax1b.plot(zs, vratios, ls='-', zorder=1, color='slategrey', lw=2)
-        ax2b.plot(zs, mratios, ls='-', zorder=1, color='slategrey', lw=2)
-
-        for ax in (ax1b, ax2b):
-            ax.tick_params(which='both', direction='in', color='slategrey')
-            ax.tick_params(axis='y', which='both', colors='slategrey')
-            ax.spines['right'].set_color('slategrey')
-            ax.yaxis.label.set_color('slategrey')
-            ax.minorticks_on()
-
-        ax1.tick_params(axis='x', labelbottom=False)
-
-        ax1.plot(zs, vslices, color='r', ls='-', zorder=2)
-        ax1.plot(zs, vslices_calc, color='b', ls=':', zorder=3)
-
-        ax2.plot(zs, mslices, color='r', ls='-', zorder=2)
-        ax2.plot(zs, mslices_calc, color='b', ls=':', zorder=3)
-
-        ax2.set_xlabel(r"$z \, \left[ {\rm au} \right]$")
-
-        ax1.set_ylabel(r"$V_{\rm slice} \, \left[ {\rm au}^3 \right]$")
-        ax2.set_ylabel(r"$M_{\rm slice} \, \left[ {\rm M}_\odot \right]$")
-
-        ax1.tick_params(which='both', direction='in', top=True)
-        ax2.tick_params(which='both', direction='in', top=True)
-
-        ax1b.set_ylabel(r"$\ \frac{V^{\rm model}_{\rm slice}}"
-                        r"{V^{\rm actual}_{\rm slice}}$")
-        ax2b.set_ylabel(r"$\ \frac{M^{\rm model}_{\rm slice}}"
-                        r"{M^{\rm actual}_{\rm slice}}$")
-
-        plt.subplots_adjust(wspace=0, hspace=0)
-
-        ax1b.set_ylim(0, 1.99)
-
-        ax1.set_box_aspect(1)
-        ax2.set_box_aspect(1)
-
-        ax1.set_zorder(ax1b.get_zorder() + 1)
-        ax2.set_zorder(ax2b.get_zorder() + 1)
-
-        # Set ax's patch invisible
-        ax1.patch.set_visible(False)
-        ax2.patch.set_visible(False)
-
-        # Set axtwin's patch visible and colorize its background white
-        ax1b.patch.set_visible(True)
-        ax2b.patch.set_visible(True)
-        ax1b.patch.set_facecolor('white')
-        ax2b.patch.set_facecolor('white')
-
-        plt.show()
-
-        return None
+        return self._jml_t(self.ts) / self._ss_jml
 
     @property
-    def rr(self):
-        if self._rr is not None:
-            return self._rr
-        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
-                                      self.grid[1] + self.csize / 2.,
-                                      self.grid[2] + self.csize / 2.,
-                                      self.params["geometry"]["inc"],
-                                      self.params["geometry"]["pa"])
-        self._rr = rr
-        return self._rr
-
-    @property
-    def ww(self):
-        if self._ww is not None:
-            return self._ww
-        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
-                                      self.grid[1] + self.csize / 2.,
-                                      self.grid[2] + self.csize / 2.,
-                                      self.params["geometry"]["inc"],
-                                      self.params["geometry"]["pa"])
-        self._ww = ww
-        return self._ww
-
-    @property
-    def pp(self):
-        if self._pp is not None:
-            return self._pp
-        rr, ww, pp = mgeom.xyz_to_rwp(self.grid[0] + self.csize / 2.,
-                                      self.grid[1] + self.csize / 2.,
-                                      self.grid[2] + self.csize / 2.,
-                                      self.params["geometry"]["inc"],
-                                      self.params["geometry"]["pa"])
-        self._pp = pp
-        return self._pp
-
-
-    @property
-    def xs(self):
-        return self.grid[0][0][::,0]
-
-    @property
-    def ys(self):
-        return self.grid[1][::,0][::,0]
-
-    @property
-    def zs(self):
-        return self.grid[2][0][0]
-
-    @property
-    def number_density(self):
-        if hasattr(self, '_nd'):
+    def number_density(self) -> np.ndarray:
+        if self._nd is not None:
             return self._nd * self.chi_xyz
 
-        R_1 = self.params["target"]["R_1"] * con.au * 1e2
-        R_2 = self.params["target"]["R_2"] * con.au * 1e2
-        mod_r_0 = self.params['geometry']['mod_r_0'] * con.au * 1e2
-        r_0 = self.params['geometry']['r_0'] * con.au * 1e2
-        w_0 = self.params['geometry']['w_0'] * con.au * 1e2
-        eps = self.params["geometry"]["epsilon"]
-        cs = self.csize * con.au * 1e2
+        r1 = self.params["target"]["R_1"] * con.au * 1e2
+        mr0 = self.params['geometry']['mod_r_0'] * con.au * 1e2
+        r0 = self.params['geometry']['r_0'] * con.au * 1e2
         q_n = self.params["power_laws"]["q_n"]
         q_nd = self.params["power_laws"]["q^d_n"]
         n_0 = self.params["properties"]["n_0"]
 
-        r = np.abs(self.rr) * con.au * 1e2 + mod_r_0 - r_0
-        w = self.ww * con.au * 1e2
-
-        nd = n_0 * (1. + mod_r_0 ** eps * w * (R_2 - R_1) /
-                    (R_1 * w_0 * r ** eps)) ** q_nd * (r / mod_r_0) ** q_n
+        nd = n_0 * mgeom.rho(self.rr * con.au * 1e2, r0, mr0) ** q_n * \
+             (self.rreff * con.au * 1e2 / r1) ** q_nd
         nd = np.where(self.fill_factor > 0, nd, np.NaN)
         nd = np.where(nd == 0, np.NaN, nd)
 
         self.number_density = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN,
                                             neginf=np.NaN)
 
-        return self.number_density * self.chi_xyz
+        return self.number_density
 
     @number_density.setter
-    def number_density(self, new_nds):
+    def number_density(self, new_nds: np.ndarray):
         self._nd = new_nds
 
     @property
-    def mass_density(self):
+    def mass_density(self) -> np.ndarray:
         """
         Mass density in g cm^-3
         """
-        mean_m_particle = self.params['properties']['mu'] * \
-                          mphys.atomic_mass("H")
-        return mean_m_particle * 1e3 * self.number_density
+        av_m_particle = self.params['properties']['mu'] * mphys.atomic_mass("H")
+
+        return av_m_particle * 1e3 * self.number_density
+
 
     @property
-    def ion_fraction(self):
-        if hasattr(self, '_xi'):
+    def ion_fraction(self) -> np.ndarray:
+        if self._xi is not None:
             return self._xi
+
+        R_1 = self.params["target"]["R_1"]
+        mod_r_0 = self.params['geometry']['mod_r_0'] * con.au * 1e2
+        r_0 = self.params['geometry']['r_0'] * con.au * 1e2
+        q_x = self.params["power_laws"]["q_x"]
+        q_xd = self.params["power_laws"]["q^d_x"]
+        x_0 = self.params["properties"]["x_0"]
+
+        r = np.abs(self.rr) * con.au * 1e2
+        r = np.where((r < r_0) & ((r + self.csize * con.au * 1e2 / 2.) >= r_0),
+                     (r_0 + r + self.csize * con.au * 1e2 / 2.) / 2., r)
+
+        xi = x_0 * mgeom.rho(r, r_0, mod_r_0) ** q_x * \
+             (self.rreff / R_1) ** q_xd
+        xi = np.where(self.fill_factor > 0, xi, np.NaN)
+        xi = np.where(xi == 0, np.NaN, xi)
+
+        self.ion_fraction = np.nan_to_num(xi, nan=np.NaN, posinf=np.NaN,
+                                          neginf=np.NaN)
+
+        return self.ion_fraction
+
+    @ion_fraction.setter
+    def ion_fraction(self, new_xis: np.ndarray):
+        self._xi = new_xis
+
+    @property
+    def temperature(self) -> np.ndarray:
+        """
+        Temperature (in Kelvin)
+        """
+        if self._temp is not None:
+            return self._temp
 
         z = np.abs(self.rr)
         a = z - 0.5 * self.csize
@@ -961,28 +918,125 @@ class JetModel:
                      self.params['geometry']['r_0'], a)
 
         def indef_integral(z):
-            num_p1 = self.params['properties']['x_0'] * \
+            num_p1 = self.params['properties']['T_0'] * \
                      self.params["geometry"]["mod_r_0"]
             num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
                        self.params["geometry"]["r_0"]) /
                       (self.params["geometry"]["mod_r_0"]))
-            num_p2 = num_p2 ** (self.params["power_laws"]["q_x"] + 1.)
-            den = self.params["power_laws"]["q_x"] + 1.
+            num_p2 = num_p2 ** (self.params["power_laws"]["q_T"] + 1.)
+            den = self.params["power_laws"]["q_T"] + 1.
             return num_p1 * num_p2 / den
 
-        xi = indef_integral(b) - indef_integral(a)
-        xi /= b - a
-        xi = np.where(self.fill_factor > 0., xi, np.NaN)
+        # xi /= b - a
+        ts = indef_integral(b) - indef_integral(a)
+        ts /= b - a
+        ts = np.where(self.fill_factor > 0., ts, np.NaN)
+        self.temperature = ts
 
-        self.ion_fraction = xi
+        return self.temperature
 
-        return self._xi
+    @temperature.setter
+    def temperature(self, new_ts: np.ndarray):
+        self._temp = new_ts
 
-    @ion_fraction.setter
-    def ion_fraction(self, new_xis):
-        self._xi = new_xis
+    @property
+    def pressure(self) -> np.ndarray:
+        """
+        Pressure in Barye (or dyn cm^-2)
+        """
+        return self.number_density * self.temperature * con.k * 1e7
 
-    def emission_measure(self, savefits: Union[bool, str] = False):
+    @property
+    def vel(self) -> np.ndarray:
+        """
+        Velocity components in km/s
+        """
+        if self._v is not None:
+            return self._v
+
+        x = self.grid[0] + 0.5 * self.csize
+        y = self.grid[1] + 0.5 * self.csize
+        z = self.grid[2] + 0.5 * self.csize
+        r = np.abs(self.rr)
+
+        r_0 = self.params['geometry']['r_0']
+        mr0 = self.params['geometry']['mod_r_0']
+        m1 = self.params['target']['M_star'] * cnsts.MSOL  # kg
+
+        a = r - 0.5 * self.csize
+        b = r + 0.5 * self.csize
+
+        a = np.where(b <= r_0, np.NaN, a)
+        b = np.where(b <= r_0, np.NaN, b)
+
+        a = np.where(a <= r_0, r_0, a)
+
+        def indef_integral(_r):
+            num_p1 = self.params['properties']['v_0'] * \
+                     self.params["geometry"]["mod_r_0"]
+            num_p2 = ((_r + self.params["geometry"]["mod_r_0"] -
+                       self.params["geometry"]["r_0"]) /
+                      (self.params["geometry"]["mod_r_0"]))
+            num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
+            den = self.params["power_laws"]["q_v"] + 1.
+            return num_p1 * num_p2 / den
+
+        vz = indef_integral(b) - indef_integral(a)
+        vz /= b - a
+        vz = np.where(self.fill_factor > 0., vz, np.NaN)
+
+        # Effective radius of (x, y) point in jet stream i.e. from what radius
+        # in the disc the material was launched
+        vr = (np.sqrt(con.G * m1) * np.sqrt(self.rreff * con.au) /
+              (self.ww * con.au) *
+              mgeom.rho(r, r_0, mr0) ** self.params['power_laws']['q_v'])
+
+        vx = vr * np.sin(self.pp)
+        vy = vr * np.cos(self.pp)
+
+        vx /= 1e3  # km/s
+        vy /= 1e3  # km/s
+
+        # vx = -vx here because velocities appear flipped in checks
+        vx = -np.where(self.fill_factor > 0., vx, np.NaN)
+        vy = np.where(self.fill_factor > 0., vy, np.NaN)
+        vz = np.where(self.rr > 0, vz, -vz)
+        vz = np.where(self.fill_factor > 0., vz, np.NaN)
+
+        i = np.radians(90. - self.params["geometry"]["inc"])
+        pa = np.radians(self.params["geometry"]["pa"])
+
+        # Set up rotation matrices in inclination and position angle,
+        # respectively
+        rot_x = np.array([[1., 0., 0.],
+                          [0., np.cos(-i), -np.sin(-i)],
+                          [0., np.sin(-i), np.cos(-i)]])
+        rot_y = np.array([[np.cos(pa), 0., np.sin(pa)],
+                          [0., 1., 0.],
+                          [-np.sin(pa), 0., np.cos(pa)]])
+
+        vxs = np.empty(np.shape(x))
+        vys = np.empty(np.shape(x))
+        vzs = np.empty(np.shape(x))
+        vs = np.stack([vx, vy, vz], axis=3)
+        for idxx, plane in enumerate(vs):
+            for idxy, column in enumerate(plane):
+                for idxz, v in enumerate(column):
+                    x, y, z = rot_x.dot(rot_y.dot(v))
+                    vxs[idxx][idxy][idxz] = x
+                    vys[idxx][idxy][idxz] = y
+                    vzs[idxx][idxy][idxz] = z
+
+        self.vel = (vxs, vys, vzs)
+
+        return self.vel
+
+    @vel.setter
+    def vel(self, new_vs: np.ndarray):
+        self._v = new_vs
+
+    def emission_measure(self,
+                         savefits: Union[bool, str] = False) -> np.ndarray:
         """
         Emission measure as viewed along the y-axis (pc cm^-6)
 
@@ -1011,7 +1065,7 @@ class JetModel:
                           freq: Union[float, Union[np.ndarray, List[float]]],
                           lte: bool = True,
                           savefits: Union[bool, str] = False,
-                          collapse: bool = True) -> np.array:
+                          collapse: bool = True) -> np.ndarray:
         """
         Return RRL optical depth as viewed along the y-axis
 
@@ -1049,11 +1103,11 @@ class JetModel:
         rrl_fwhm_stark = mrrl.deltanu_l(n_es, rrl_n, rrl_dn)
 
         phi_v = mrrl.phi_voigt_nu(rest_freq, rrl_fwhm_stark, rrl_fwhm_thermal)
-        # TODO: Figure this out
+
         if isinstance(freq, Iterable):
-            tau_rrl = np.empty((len(freq), self.nz, self.nx))
-            for idx, nu in enumerate(freq):
-                kappa_rrl_lte = mrrl.kappa_l(nu, rrl_n, fn1n2, phi_v(nu),
+            tau_rrl = np.empty((np.shape(freq)[0], self.nz, self.nx))
+            for idx, f in enumerate(freq):
+                kappa_rrl_lte = mrrl.kappa_l(f, rrl_n, fn1n2, phi_v(f),
                                              n_es,
                                              mrrl.ni_from_ne(n_es, element),
                                              self.temperature, z_atom, en)
@@ -1065,7 +1119,7 @@ class JetModel:
                                          n_es, mrrl.ni_from_ne(n_es, element),
                                          self.temperature, z_atom, en)
             tau_rrl = kappa_rrl_lte * (self.csize * con.au * 1e2 *
-                                        (self.fill_factor / self.areas))
+                                       (self.fill_factor / self.areas))
 
         if not collapse:
             return tau_rrl
@@ -1101,7 +1155,6 @@ class JetModel:
         av_temp = np.nanmean(np.where(self.temperature > 0.,
                                       self.temperature, np.NaN), axis=1)
 
-
         tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, savefits=False)
         tau_ff = self.optical_depth_ff(freq, collapse=True)
 
@@ -1115,7 +1168,7 @@ class JetModel:
     def flux_rrl(self, rrl: str,
                  freq: Union[float, Union[np.ndarray, List[float]]],
                  lte: bool = True, contsub: bool = True,
-                 savefits: Union[bool, str] = False):
+                 savefits: Union[bool, str] = False) -> np.ndarray:
         """
         Return RRL flux (in Jy). Note these are the continuum-subtracted fluxes
 
@@ -1140,7 +1193,7 @@ class JetModel:
             RRL fluxes as viewed along y-axis.
         """
         if isinstance(freq, Iterable):
-            fluxes = np.empty((len(freq), self.nz, self.nx))
+            fluxes = np.empty((np.shape(freq)[0], self.nz, self.nx))
             for idx, nu in enumerate(freq):
                 i_rrl = self.intensity_rrl(rrl, nu, lte=lte, savefits=False)
                 flux = i_rrl * np.arctan((self.csize * con.au) /
@@ -1202,9 +1255,10 @@ class JetModel:
                 # Equation 1 of Reynolds (1986) otherwise as an approximation
                 else:
                     gff = 11.95 * self.temperature ** 0.15 * nu ** -0.1
-                tau = 0.018 * self.temperature ** -1.5 * nu ** -2. * \
-                      n_es ** 2. * (self.csize * con.au * 1e2 *
-                                    (self.fill_factor / self.areas)) * gff
+
+                tau = (0.018 * self.temperature ** -1.5 * nu ** -2. *
+                       n_es ** 2. * (self.csize * con.au * 1e2 *
+                                    (self.fill_factor / self.areas)) * gff)
                 tff[idx] = np.nansum(tau, axis=1).T
 
         else:
@@ -1218,8 +1272,8 @@ class JetModel:
             else:
                 gff = 11.95 * self.temperature ** 0.15 * freq ** -0.1
             tff = 0.018 * self.temperature ** -1.5 * freq ** -2. * \
-                  n_es ** 2. * (self.csize * con.au * 1e2 * \
-                  (self.fill_factor / self.areas)) * gff
+                  n_es ** 2. * (self.csize * con.au * 1e2 *
+                                (self.fill_factor / self.areas)) * gff
 
         if not collapse:
             return tff
@@ -1233,7 +1287,7 @@ class JetModel:
         return tff.T
 
     def intensity_ff(self, freq: Union[float, Union[np.ndarray, List[float]]],
-                     savefits: Union[bool, str] = False):
+                     savefits: Union[bool, str] = False) -> np.ndarray:
         """
         Radio intensity as viewed along y-axis (in W m^-2 Hz^-1 sr^-1)
 
@@ -1252,7 +1306,7 @@ class JetModel:
         ts = self.temperature
 
         if isinstance(freq, Iterable):
-            ints_ff = np.empty((len(freq), self.nz, self.nx))
+            ints_ff = np.empty((np.shape(freq)[0], self.nz, self.nx))
             for idx, nu in enumerate(freq):
                 T_b = np.nanmean(np.where(ts > 0., ts, np.NaN), axis=1) * \
                       (1. - np.exp(-self.optical_depth_ff(nu)))
@@ -1272,7 +1326,7 @@ class JetModel:
         return ints_ff.T
 
     def flux_ff(self, freq: Union[float, Union[np.ndarray, List[float]]],
-                savefits: Union[bool, str] = False):
+                savefits: Union[bool, str] = False) -> np.ndarray:
         """
         Return flux (in Jy)
 
@@ -1289,7 +1343,7 @@ class JetModel:
             Fluxes as viewed along y-axis.
         """
         if isinstance(freq, Iterable):
-            fluxes = np.empty((len(freq), self.nz, self.nx))
+            fluxes = np.empty((np.shape(freq)[0], self.nz, self.nx))
             for idx, nu in enumerate(freq):
                 ints = self.intensity_ff(nu)
                 fs = ints * np.arctan((self.csize * con.au) /
@@ -1374,7 +1428,7 @@ class JetModel:
         hdr.comments['CDELT2'] = 'Pixel size in DEC (deg)'
 
         if image_type in ('flux', 'tau', 'intensity'):
-            if ndims  == 3:
+            if ndims == 3:
                 nchan = len(freq)
                 if nchan != 1:
                     chan_width = freq[1] - freq[0]
@@ -1413,176 +1467,259 @@ class JetModel:
         return None
 
     @property
-    def temperature(self):
-        """
-        Temperature (in Kelvin)
-        """
-        if hasattr(self, '_t'):
-            return self._t
-        z = np.abs(self.grid[2] + 0.5 * self.csize)
-        z = np.abs(self.rr)
-        a = z - 0.5 * self.csize
-        b = z + 0.5 * self.csize
-
-        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
-        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
-
-        a = np.where(a <= self.params['geometry']['r_0'],
-                     self.params['geometry']['r_0'], a)
-
-        def indef_integral(z):
-            num_p1 = self.params['properties']['T_0'] * \
-                     self.params["geometry"]["mod_r_0"]
-            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
-                       self.params["geometry"]["r_0"]) /
-                      (self.params["geometry"]["mod_r_0"]))
-            num_p2 = num_p2 ** (self.params["power_laws"]["q_T"] + 1.)
-            den = self.params["power_laws"]["q_T"] + 1.
-            return num_p1 * num_p2 / den
-
-        # xi /= b - a
-        ts = indef_integral(b) - indef_integral(a)
-        ts /= b - a
-        ts = np.where(self.fill_factor > 0., ts, np.NaN)
-        self.temperature = ts
-
-        return self._t
-
-    @temperature.setter
-    def temperature(self, new_ts):
-        self._t = new_ts
-
-    @property
-    def pressure(self):
-        """
-        Pressure in Barye (or dyn cm^-2)
-        """
-        return self.number_density * self.temperature * con.k * 1e7
-
-    @property
-    def vel(self):
-        """
-        Velocity components in km/s
-        """
-        if hasattr(self, '_v'):
-            return self._v
-
-        x = self.grid[0] + 0.5 * self.csize
-        y = self.grid[1] + 0.5 * self.csize
-        z = self.grid[2] + 0.5 * self.csize
-        r = np.abs(self.rr)
-
-        r_effs = mgeom.r_eff(self.ww, self.params['target']['R_1'],
-                             self.params['target']['R_2'],
-                             self.params["geometry"]["w_0"],
-                             r, self.params["geometry"]["mod_r_0"],
-                             self.params["geometry"]["r_0"],
-                             self.params["geometry"]["epsilon"])
-
-        r_0 = self.params['geometry']['r_0']
-        m1 = self.params['target']['M_star'] * 1.98847e30  # kg
-
-        a = r - 0.5 * self.csize
-        b = r + 0.5 * self.csize
-
-        a = np.where(b <= r_0, np.NaN, a)
-        b = np.where(b <= r_0, np.NaN, b)
-
-        a = np.where(a <= r_0, r_0, a)
-
-        def indef_integral(r):
-            num_p1 = self.params['properties']['v_0'] * \
-                     self.params["geometry"]["mod_r_0"]
-            num_p2 = ((r + self.params["geometry"]["mod_r_0"] -
-                       self.params["geometry"]["r_0"]) /
-                      (self.params["geometry"]["mod_r_0"]))
-            num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
-            den = self.params["power_laws"]["q_v"] + 1.
-            return num_p1 * num_p2 / den
-
-        vz = indef_integral(b) - indef_integral(a)
-        vz /= b - a
-        vz = np.where(self.fill_factor > 0., vz, np.NaN)
-
-        # Effective radius of (x, y) point in jet stream i.e. from what radius
-        # in the disc the material was launched
-        vx = np.sqrt(con.G * m1 / (r_effs * con.au)) * np.sin(self.pp)
-        vy = np.sqrt(con.G * m1 / (r_effs * con.au)) * np.cos(self.pp)
-
-        vx /= 1e3  # km/s
-        vy /= 1e3  # km/s
-
-        # vx = -vx here because velocities appear flipped in checks
-        vx = -np.where(self.fill_factor > 0., vx, np.NaN)
-        vy = np.where(self.fill_factor > 0., vy, np.NaN)
-        vz = np.where(self.rr > 0, vz, -vz)
-        vz = np.where(self.fill_factor > 0., vz, np.NaN)
-
-        i = np.radians(90. - self.params["geometry"]["inc"])
-        pa = np.radians(self.params["geometry"]["pa"])
-
-        # Set up rotation matrices in inclination and position angle,
-        # respectively
-        rot_x = np.array([[1., 0., 0.],
-                          [0., np.cos(-i), -np.sin(-i)],
-                          [0., np.sin(-i), np.cos(-i)]])
-        rot_y = np.array([[np.cos(pa), 0., np.sin(pa)],
-                          [0., 1., 0.],
-                          [-np.sin(pa), 0., np.cos(pa)]])
-
-        vxs = np.empty(np.shape(x))
-        vys = np.empty(np.shape(x))
-        vzs = np.empty(np.shape(x))
-        vs = np.stack([vx, vy, vz], axis=3)
-        for idxx, plane in enumerate(vs):
-            for idxy, column in enumerate(plane):
-                for idxz, v in enumerate(column):
-                    x, y, z = rot_x.dot(rot_y.dot(v))
-                    vxs[idxx][idxy][idxz] = x
-                    vys[idxx][idxy][idxz] = y
-                    vzs[idxx][idxy][idxz] = z
-
-        self.vel = (vxs, vys, vzs)
-
-        return self._v
-
-    @vel.setter
-    def vel(self, new_vs):
-        self._v = new_vs
-
-    @property
-    def log(self):
+    def log(self) -> Union[None, logger.Log]:
         return self._log
 
     @log.setter
-    def log(self, new_log):
+    def log(self, new_log: Union[None, logger.Log]):
         self._log = new_log
 
     @property
-    def csize(self):
+    def csize(self) -> float:
         return self._csize
 
     @property
-    def nx(self):
+    def nx(self) -> int:
         return self._nx
 
     @property
-    def ny(self):
+    def ny(self) -> int:
         return self._ny
 
     @property
-    def nz(self):
+    def nz(self) -> int:
         return self._nz
 
     @property
-    def params(self):
+    def params(self) -> dict:
         return self._params
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
-    def model_plot(self, savefig: bool = False):
+    # noinspection PyTypeChecker
+    def plot_mass_volume_slices(self):
+        """
+        Plot mass and volume slices as check for consistency (i.e. mass/volume
+        are conserved).
+        """
+
+        def m_slice(a, b):
+            """Mass of slice over the interval from a --> b in z,
+            in kg calculated from model parameters"""
+            n_0 = self.params["properties"]["n_0"] * 1e6
+            mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
+            r_0 = self.params["geometry"]["r_0"] * con.au
+            q_n = self.params["power_laws"]["q_n"]
+            w_0 = self.params["geometry"]["w_0"] * con.au
+            eps = self.params["geometry"]["epsilon"]
+            mu = self.params['properties']['mu'] * mphys.atomic_mass("H")
+
+            def indef_integral(z):
+                """Volume of slice over the interval from a --> b in z,
+                in m^3 calculated from model parameters"""
+                c = 1 + q_n + 2. * eps
+                num_p1 = mu * np.pi * mod_r_0 * n_0 * w_0 ** 2.
+                num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
+
+                return num_p1 * num_p2 / c
+
+            return indef_integral(b) - indef_integral(a)
+
+        def v_slice(a, b):
+            """Volume of slice over the interval from a --> b in z, in m^3"""
+            mod_r_0 = self.params["geometry"]["mod_r_0"] * con.au
+            r_0 = self.params["geometry"]["r_0"] * con.au
+            w_0 = self.params["geometry"]["w_0"] * con.au
+            eps = self.params["geometry"]["epsilon"]
+
+            def indef_integral(z):
+                c = 1 + 2. * eps
+                num_p1 = np.pi * mod_r_0 * w_0 ** 2.
+                num_p2 = ((z + mod_r_0 - r_0) / mod_r_0) ** c
+
+                return num_p1 * num_p2 / c
+
+            return indef_integral(b) - indef_integral(a)
+
+        a = np.abs(self.zs + self.csize / 2) - self.csize / 2
+        b = np.abs(self.zs + self.csize / 2) + self.csize / 2
+
+        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
+        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
+        a = np.where(a <= self.params['geometry']['r_0'],
+                     self.params['geometry']['r_0'], a)
+
+        a *= con.au
+        b *= con.au
+
+        # Use the above functions to calculate what each slice's mass should be
+        mslices_calc = m_slice(a, b)
+        vslices_calc = v_slice(a, b)
+
+        # Calculate cell volumes and slice volumes
+        vcells = self.fill_factor * (self.csize * con.au) ** 3.
+        vslices = np.nansum(np.nansum(vcells, axis=1), axis=1)
+
+        # Calculate mass density of cells (in kg m^-3)
+        mdcells = self.number_density * self.params['properties']['mu'] * \
+                  mphys.atomic_mass("H") * 1e6
+
+        # Calculate cell masses
+        mcells = mdcells * vcells
+
+        # Sum cell masses to get slice masses
+        mslices = np.nansum(np.nansum(mcells, axis=1), axis=1)
+
+        vslices_calc /= con.au ** 3.
+        mslices_calc /= cnsts.MSOL
+        vslices /= con.au ** 3.
+        mslices /= cnsts.MSOL
+
+        verrs = vslices - vslices_calc
+        merrs = mslices - mslices_calc
+
+        vratios = vslices / vslices_calc
+        mratios = mslices / mslices_calc
+
+        # Average z-value for each slice
+        zs = np.mean([a, b], axis=1) / con.au
+        zs *= np.sign(self.zs + self.csize / 2)
+
+        plt.close('all')
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True,
+                                       figsize=[cfg.plots["dims"]["column"],
+                                                cfg.plots["dims"][
+                                                    "column"] * 2])
+
+        ax1b = ax1.twinx()
+        ax2b = ax2.twinx()
+        ax1b.sharey(ax2b)
+
+        ax1b.plot(zs, vratios, ls='-', zorder=1, color='slategrey', lw=2)
+        ax2b.plot(zs, mratios, ls='-', zorder=1, color='slategrey', lw=2)
+
+        for ax in (ax1b, ax2b):
+            ax.tick_params(which='both', direction='in', color='slategrey')
+            ax.tick_params(axis='y', which='both', colors='slategrey')
+            ax.spines['right'].set_color('slategrey')
+            ax.yaxis.label.set_color('slategrey')
+            ax.minorticks_on()
+
+        ax1.tick_params(axis='x', labelbottom=False)
+
+        ax1.plot(zs, vslices, color='r', ls='-', zorder=2)
+        ax1.plot(zs, vslices_calc, color='b', ls=':', zorder=3)
+
+        ax2.plot(zs, mslices, color='r', ls='-', zorder=2)
+        ax2.plot(zs, mslices_calc, color='b', ls=':', zorder=3)
+
+        ax2.set_xlabel(r"$z \, \left[ {\rm au} \right]$")
+
+        ax1.set_ylabel(r"$V_{\rm slice} \, \left[ {\rm au}^3 \right]$")
+        ax2.set_ylabel(r"$M_{\rm slice} \, \left[ {\rm M}_\odot \right]$")
+
+        ax1.tick_params(which='both', direction='in', top=True)
+        ax2.tick_params(which='both', direction='in', top=True)
+
+        ax1b.set_ylabel(r"$\ \frac{V^{\rm model}_{\rm slice}}"
+                        r"{V^{\rm actual}_{\rm slice}}$")
+        ax2b.set_ylabel(r"$\ \frac{M^{\rm model}_{\rm slice}}"
+                        r"{M^{\rm actual}_{\rm slice}}$")
+
+        plt.subplots_adjust(wspace=0, hspace=0)
+
+        ax1b.set_ylim(0, 1.99)
+
+        ax1.set_box_aspect(1)
+        ax2.set_box_aspect(1)
+
+        ax1.set_zorder(ax1b.get_zorder() + 1)
+        ax2.set_zorder(ax2b.get_zorder() + 1)
+
+        # Set ax's patch invisible
+        ax1.patch.set_visible(False)
+        ax2.patch.set_visible(False)
+
+        # Set axtwin's patch visible and colorize its background white
+        ax1b.patch.set_visible(True)
+        ax2b.patch.set_visible(True)
+        ax1b.patch.set_facecolor('white')
+        ax2b.patch.set_facecolor('white')
+
+        plt.show()
+
+        return None
+
+    def diagnostic_plot(self, savefig: Union[bool, str] = False) \
+            -> Union[Tuple, None]:
+        inc = self.params['geometry']['inc']
+        pa = self.params['geometry']['pa']
+        if inc != 90. or pa != 0.:
+            self.log.add_entry("WARNING",
+                               "Diagnostic plots may be increasingly "
+                               "inaccurate for inclined or rotated jets"
+                               " (i.e. i != 90 deg or pa != 0 deg")
+            return None
+
+        # Conservation of mass, angular momentum and energy
+        cell_vol = (self.csize * con.au * 1e2) ** 3.
+        particle_mass = self.params['properties']['mu'] * con.u
+        masses = self.mass
+        vxs, vys = self.vel[:2]
+
+        # TODO: Method needed to calculate v_w whilst incorporating the
+        #  effects of inclination and position angle
+        vws = np.sqrt(vxs ** 2. + vys ** 2.)
+        angmoms = masses * (vws * 1000.) * (self.ww * con.au)
+
+        if inc == 90. and pa == 0.:
+            masses_slices = np.nansum(masses, axis=(0, 1))
+            angmom_slices = np.nansum(angmoms, axis=(0, 1))
+            rs = self.rr[0][0]
+        # Following not implemented yet as vws need to be accurately calculated
+        else:
+            rs = np.arange(self.csize / 2., np.nanmax(self.rr), self.csize)
+            rs = np.append(-rs, rs)
+            masses_slices = []
+            angmom_slices = []
+            for r in rs:
+                mask = ((self.rr >= (r - self.csize / 2.)) &
+                        (self.rr <= (r + self.csize / 2.)))
+                masses_slices.append(np.nansum(np.where(mask, masses, np.NaN)))
+                angmom_slices.append(np.nansum(np.where(mask, angmoms, np.NaN)))
+
+        plt.close('all')
+
+        fig, (ax1, ax2) = plt.subplots(2, 1,
+                                       figsize=(cfg.plots['dims']['column'],
+                                                cfg.plots['dims']['text']),
+                                       sharex=True)
+
+        ax1.plot(rs, masses_slices, 'b-')
+        ax2.plot(rs, angmom_slices, 'r-')
+
+        ax2.set_xlabel(r'$r\,\left[\mathrm{au}\right]$')
+
+        ax1.set_ylabel(r'$m\,\left[\mathrm{kg}\right]$')
+        ax2.set_ylabel(r'$L\,\left[\mathrm{kg\,m^2\,s{-1}}\right]$')
+
+        for ax in (ax1, ax2):
+            ax.tick_params(which='both', direction='in', top=True, right=True)
+            ax.minorticks_on()
+
+        plt.subplots_adjust(wspace=0, hspace=0)
+
+        if savefig:
+            self.log.add_entry("INFO",
+                               "Diagnostic plot saved to " + savefig)
+            plt.savefig(savefig, bbox_inches='tight', dpi=300)
+
+        return ax1, ax2
+
+    def model_plot(self, savefig: Union[bool, str] = False):
         """
         Generate 4 subplots of (from top left, clockwise) number density,
         temperature, ionisation fraction and velocity.
@@ -1780,7 +1917,7 @@ class JetModel:
         return None
 
     def radio_plot(self, freq: float, percentile: float = 5.,
-                   savefig: bool = False):
+                   savefig: Union[bool, str] = False):
         """
         Generate 3 subplots of (from left to right) flux, optical depth and
         emission measure.
@@ -1828,7 +1965,6 @@ class JetModel:
         m_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 1],
                                                   width_ratios=[5.667, 1],
                                                   wspace=0.0, hspace=0.0)
-        import matplotlib
         m_ax = plt.subplot(m_cell[0, 0])
         m_cax = plt.subplot(m_cell[0, 1])
 
@@ -1948,8 +2084,9 @@ class JetModel:
         ax : matplotlib.axes._axes.Axes
             Axis to plot to
 
-        times : np.array of astropy.units.quantity.Quantity instances
-            Times to calculate mass loss rates at
+        savefig: bool, str
+            Whether to save the plot to file. If False, will not, but if
+            a str representing a valid path will save to that path.
         Returns
         -------
         numpy.array giving mass loss rates
@@ -1967,7 +2104,7 @@ class JetModel:
             fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
                                                   cfg.plots['dims']['column']))
 
-        ax.plot(times / con.year, jmls * con.year / 1.98847e30, ls='-',
+        ax.plot(times / con.year, jmls * con.year / cnsts.MSOL, ls='-',
                 color='blue', lw=2, zorder=3, label=r'$\dot{m}_{\rm jet}$')
 
         xlims = ax.get_xlim()
@@ -1989,6 +2126,17 @@ class JetModel:
             plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
         return ax, times, jmls
+
+    def save(self, filename):
+        ps = {'params': self._params,
+              'areas': None if self._areas is None else self.areas,
+              'ffs': None if self._ff is None else self.fill_factor,
+              'time': self.time,
+              'log': self.log}
+        self.log.add_entry("INFO", "Saving physical model to "
+                                   "{}".format(filename))
+        pickle.dump(ps, open(filename, "wb"))
+        return None
 
 
 class ContinuumRun:
@@ -2041,8 +2189,7 @@ class ContinuumRun:
         units = ['yr', '', '', 's', 's', '', 'Hz', 'Hz', 'Hz', '', '', '']
         fmt = ['.2f', '', '', '.0f', '.0f', '', '.3e', '.3e', '.3e', '', '', '']
         val = [self._year, self._obs_type.capitalize(), self._tscop,
-               self._t_obs, self._t_int,
-               None if self._obs_type == 'continuum' else self.line,
+               self._t_obs, self._t_int, None,
                self._freq, self._bandwidth, self._chanwidth,
                self.radiative_transfer, self.simobserve, self.completed]
 
@@ -2053,7 +2200,7 @@ class ContinuumRun:
         tab_head = []
         for i, h in enumerate(hdr):
             if units[i] != '':
-                tab_head.append(h + '\n[' + units[i] +']')
+                tab_head.append(h + '\n[' + units[i] + ']')
             else:
                 tab_head.append(h)
 
@@ -2062,14 +2209,13 @@ class ContinuumRun:
 
         return tab
 
-
     @property
-    def results(self):
+    def results(self) -> dict:
         """Quantitative results gleaned from products"""
         return self._results
 
     @results.setter
-    def results(self, new_results):
+    def results(self, new_results: dict):
         if not isinstance(new_results, dict):
             raise TypeError("setter method for results attribute requires dict")
         self._results = new_results
@@ -2079,12 +2225,12 @@ class ContinuumRun:
         del self._results
 
     @property
-    def products(self):
+    def products(self) -> dict:
         """Any data products resulting from the executed run"""
         return self._products
 
     @products.setter
-    def products(self, new_products):
+    def products(self, new_products: dict):
         if not isinstance(new_products, dict):
             raise TypeError("setter method for products attribute requires "
                             "dict")
@@ -2095,25 +2241,25 @@ class ContinuumRun:
         del self._products
 
     @property
-    def obs_type(self):
+    def obs_type(self) -> str:
         return self._obs_type
 
     @property
-    def dcy(self):
+    def dcy(self) -> str:
         """Parent directory of the run"""
         return self._dcy
 
     @dcy.setter
-    def dcy(self, new_dcy):
+    def dcy(self, new_dcy: str):
         self._dcy = new_dcy
 
     @property
-    def model_dcy(self):
+    def model_dcy(self) -> str:
         """Directory containing model files"""
         return os.sep.join([self.dcy, f'Day{self.day}'])
 
     @property
-    def rt_dcy(self):
+    def rt_dcy(self) -> Union[str, None]:
         """Directory to contain radiative transfer data products/files"""
         if not self.radiative_transfer:
             return None
@@ -2121,61 +2267,61 @@ class ContinuumRun:
             return os.sep.join([self.model_dcy, miscf.freq_str(self.freq)])
 
     @property
-    def year(self):
+    def year(self) -> float:
         return self._year
 
     @property
-    def day(self):
+    def day(self) -> float:
         return int(self.year * 365.)
 
     @property
-    def freq(self):
+    def freq(self) -> float:
         return self._freq
 
     @property
-    def bandwidth(self):
+    def bandwidth(self) -> float:
         return self._bandwidth
 
     @property
-    def chanwidth(self):
+    def chanwidth(self) -> float:
         return self._chanwidth
 
     @property
-    def t_obs(self):
+    def t_obs(self) -> float:
         return self._t_obs
 
     @property
-    def t_int(self):
+    def t_int(self) -> float:
         return self._t_int
 
     @property
-    def tscop(self):
+    def tscop(self) -> Tuple[str, str]:
         return self._tscop
 
     @property
-    def fits_flux(self):
+    def fits_flux(self) -> str:
         return self.rt_dcy + os.sep + '_'.join(['Flux', 'Day' + str(self.day),
-                                                miscf.freq_str(self.freq)]) +\
+                                                miscf.freq_str(self.freq)]) + \
                '.fits'
 
     @property
-    def fits_tau(self):
+    def fits_tau(self) -> str:
         return self.rt_dcy + os.sep + '_'.join(['Tau', 'Day' + str(self.day),
-                                                miscf.freq_str(self.freq)]) +\
+                                                miscf.freq_str(self.freq)]) + \
                '.fits'
 
     @property
-    def fits_em(self):
+    def fits_em(self) -> str:
         return self.rt_dcy + os.sep + '_'.join(['EM', 'Day' + str(self.day),
-                                                miscf.freq_str(self.freq)]) +\
+                                                miscf.freq_str(self.freq)]) + \
                '.fits'
 
     @property
-    def nchan(self):
+    def nchan(self) -> int:
         return int(self.bandwidth / self.chanwidth)
 
     @property
-    def chan_freqs(self):
+    def chan_freqs(self) -> np.ndarray:
         chan1 = self.freq - self.bandwidth / 2. + self.chanwidth / 2.
         return chan1 + np.arange(self.nchan) * self.chanwidth
 
@@ -2196,8 +2342,35 @@ class RRLRun(ContinuumRun):
 
         self._obs_type = 'rrl'
 
+    def __str__(self):
+        hdr = ['Year', 'Type', 'Telescope', 't_obs', 't_int', 'Line',
+               'Frequency', 'Bandwidth', 'Channel width',
+               'Radiative Transfer?', 'Synthetic Obs.?', 'Completed?']
+        units = ['yr', '', '', 's', 's', '', 'Hz', 'Hz', 'Hz', '', '', '']
+        fmt = ['.2f', '', '', '.0f', '.0f', '', '.3e', '.3e', '.3e', '', '', '']
+        val = [self._year, self._obs_type.capitalize(), self._tscop,
+               self._t_obs, self._t_int, self.line,
+               self._freq, self._bandwidth, self._chanwidth,
+               self.radiative_transfer, self.simobserve, self.completed]
+
+        for i, v in enumerate(val):
+            if v is None:
+                val[i] = '-'
+
+        tab_head = []
+        for i, h in enumerate(hdr):
+            if units[i] != '':
+                tab_head.append(h + '\n[' + units[i] + ']')
+            else:
+                tab_head.append(h)
+
+        tab = tabulate.tabulate([val], tab_head, tablefmt="fancy_grid",
+                                floatfmt=fmt)
+
+        return tab
+
     @property
-    def rt_dcy(self):
+    def rt_dcy(self) -> Union[str, None]:
         """Directory to contain radiative transfer data products/files"""
         if not self.radiative_transfer:
             return None
@@ -2205,20 +2378,22 @@ class RRLRun(ContinuumRun):
             return os.sep.join([self.model_dcy, self.line])
 
     @property
-    def fits_flux(self):
+    def fits_flux(self) -> str:
         return self.rt_dcy + os.sep + '_'.join(['Flux', 'Day' + str(self.day),
                                                 self.line]) + '.fits'
 
     @property
-    def fits_tau(self):
+    def fits_tau(self) -> str:
         return self.rt_dcy + os.sep + '_'.join(['Tau', 'Day' + str(self.day),
                                                 self.line]) + '.fits'
 
     @property
-    def fits_em(self):
+    def fits_em(self) -> str:
         return self.rt_dcy + os.sep + '_'.join(['EM', 'Day' + str(self.day),
                                                 self.line]) + '.fits'
 
+
+# noinspection PyCallingNonCallable
 class Pipeline:
     """
     Class to handle a creation of physical jet model, creation of .fits files
@@ -2226,7 +2401,7 @@ class Pipeline:
     """
 
     @classmethod
-    def load_pipeline(cls, load_file):
+    def load_pipeline(cls, load_file) -> 'Pipeline':
         """
         Loads pipeline from a previously saved state
 
@@ -2366,10 +2541,14 @@ class Pipeline:
             for idx2, freq in enumerate(self.params['continuum']['freqs']):
                 run = ContinuumRun(self.dcy, time, freq,
                                    bws[idx2] if miscf.is_iter(bws) else bws,
-                                   chanws[idx2] if miscf.is_iter(chanws) else chanws,
-                                   t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
-                                   t_ints[idx2] if miscf.is_iter(t_ints) else t_ints,
-                                   tscps[idx2] if miscf.is_iter(tscps) else tscps)
+                                   chanws[idx2] if miscf.is_iter(
+                                       chanws) else chanws,
+                                   t_obs[idx2] if miscf.is_iter(
+                                       t_obs) else t_obs,
+                                   t_ints[idx2] if miscf.is_iter(
+                                       t_ints) else t_ints,
+                                   tscps[idx2] if miscf.is_iter(
+                                       tscps) else tscps)
                 # self.log.add_entry(mtype="INFO",
                 #                    entry="Run #{} -> Details:\n{}"
                 #                          "".format(len(runs) + 1,
@@ -2411,7 +2590,6 @@ class Pipeline:
         self.log.add_entry(mtype="INFO",
                            entry=self.__str__(), timestamp=True)
 
-
     def __str__(self):
         hdr = ['Year', 'Type', 'Telescope', 't_obs', 't_int', 'Line',
                'Frequency', 'Bandwidth', 'Channel width',
@@ -2436,7 +2614,7 @@ class Pipeline:
         tab_head = []
         for i, h in enumerate(hdr):
             if units[i] != '':
-                tab_head.append(h + '\n[' + units[i] +']')
+                tab_head.append(h + '\n[' + units[i] + ']')
             else:
                 tab_head.append(h)
 
@@ -2467,10 +2645,10 @@ class Pipeline:
         home = os.path.expanduser('~')
         rs = self.runs
         for idx, run in enumerate(rs):
-            #for key in run:
-            if not absolute_directories:# and type(run[key]) is str:
+            # for key in run:
+            if not absolute_directories:  # and type(run[key]) is str:
                 rs[idx].dcy = run.dcy.replace(home, '~')
-            #rs[idx] = run
+            # rs[idx] = run
 
         ps = self._params
         mf = self.model_file
@@ -2548,6 +2726,11 @@ class Pipeline:
         -------
         Dictionary of data products from each part of the execution
         """
+        from datetime import datetime, timedelta
+        import RaJePy.casa as casa
+        import RaJePy.casa.tasks as tasks
+        import RaJePy.maths as maths
+
         self.log.add_entry("INFO", "Beginning pipeline execution")
         if verbose != self.log.verbose:
             self.log.verbose = verbose
@@ -2557,14 +2740,9 @@ class Pipeline:
                          self.model.params['target']['dec'],
                          unit=(u.hourangle, u.degree), frame='fk5')
 
+        ptgfile = self.model_dcy + os.sep + 'pointings.ptg'
         if simobserve:
-            from datetime import datetime, timedelta
-            import RaJePy.casa as casa
-            import RaJePy.casa.tasks as tasks
-            import RaJePy.maths as maths
-
             # Make pointing file
-            ptgfile = self.model_dcy + os.sep + 'pointings.ptg'
             ptg_txt = "#Epoch     RA          DEC      TIME(optional)\n"
             ptg_txt += "J2000 {} ".format(tgt_c.to_string('hmsdms'))
 
@@ -2586,7 +2764,7 @@ class Pipeline:
             if run.completed and not clobber:
                 self.log.add_entry(mtype="INFO",
                                    entry="Run #{} previously completed, "
-                                         "skipping".format(idx + 1,),
+                                         "skipping".format(idx + 1, ),
                                    timestamp=False)
                 continue
             try:
@@ -2685,7 +2863,7 @@ class Pipeline:
                                                timestamp=False)
                             fluxes = fits.open(run.fits_flux)[0].data[0]
 
-                    print(format(run.freq, '.1e')+'GHz ',np.shape(fluxes))
+                    print(format(run.freq, '.1e') + 'GHz ', np.shape(fluxes))
                     if run.obs_type == 'continuum':
                         flux = np.nansum(np.nanmean(fluxes, axis=0))
                         self.log.add_entry(mtype="INFO",
@@ -2771,7 +2949,7 @@ class Pipeline:
                 if ew_int or time_up < run.t_obs:
                     multiple_ms = True
 
-                totaltimes = [time_up] * (run.t_obs // time_up)
+                totaltimes = [time_up] * int(run.t_obs // time_up)
                 totaltimes += [run.t_obs - run.t_obs // time_up * time_up]
 
                 self.log.add_entry("INFO",
@@ -2951,7 +3129,7 @@ class Pipeline:
                 eps = self.model.params['geometry']['epsilon']
                 dist_pc = self.model.params['target']['dist']
 
-                jet_deconv_maj_au = mod_r_0_au * tau_0 ** (-1. / q_tau) +\
+                jet_deconv_maj_au = mod_r_0_au * tau_0 ** (-1. / q_tau) + \
                                     r_0_au - mod_r_0_au
                 jet_deconv_maj_au *= 2  # For biconical jet
                 jet_deconv_maj_as = np.arctan(jet_deconv_maj_au * con.au /
@@ -3022,7 +3200,8 @@ class Pipeline:
                                              imsize_cells[0] / 2.,
                                              imsize_cells[1] / 2.,
                                              jet_conv_maj, jet_conv_min,
-                                             self.model.params['geometry']['pa'])
+                                             self.model.params['geometry'][
+                                                 'pa'])
 
                     with open(imfit_estimates_file, 'wt') as f:
                         f.write(est_str)
@@ -3039,6 +3218,7 @@ class Pipeline:
                 script.execute(dcy=run.rt_dcy, dryrun=dryrun)
 
                 if run.obs_type == 'continuum':
+                    # noinspection PyUnboundLocalVariable
                     if os.path.exists(imfit_results):
                         run.results['imfit'] = {}
                         with open(imfit_results, 'rt') as f:
@@ -3051,7 +3231,8 @@ class Pipeline:
                                     line = [float(_) for _ in line.split()]
                             for idx4, val in enumerate(line):
                                 run.results['imfit'][h[idx4]] = {'val': val,
-                                                                 'unit': units[idx4]}
+                                                                 'unit': units[
+                                                                     idx4]}
                     else:
                         self.log.add_entry("ERROR",
                                            "Run #{}'s imfit failed. Please see "
@@ -3074,17 +3255,18 @@ class Pipeline:
 
             self.runs[idx].completed = True
 
-        for year in self.params["continuum"]['times']:
-            self.plot_continuum_fluxes(year, savefig=True)
+        if not dryrun and simobserve:
+            for year in self.params["continuum"]['times']:
+                self.plot_continuum_fluxes(year, savefig=True)
 
         self.save(self.save_file)
         self.model.save(self.model_file)
 
         return None  # self.runs[idx]['products']
 
-    def plot_continuum_fluxes(self, plot_time : float,
-                              plot_reynolds : bool = True,
-                              savefig : bool = False) -> None:
+    def plot_continuum_fluxes(self, plot_time: float,
+                              plot_reynolds: bool = True,
+                              savefig: bool = False) -> None:
         freqs, fluxes = [], []
         freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
         for idx, run in enumerate(self.runs):
@@ -3122,10 +3304,11 @@ class Pipeline:
                                 np.log10(freqs_imfit[n] / freqs_imfit[n - 1]))
             c = np.log(freqs_imfit[n] / freqs_imfit[n - 1])
             ealpha = np.sqrt((efluxes_imfit[n] / (fluxes_imfit[n] * c)) ** 2. +
-                             (efluxes_imfit[n - 1] / (fluxes_imfit[n - 1] * c)) ** 2.)
+                             (efluxes_imfit[n - 1] / (
+                                     fluxes_imfit[n - 1] * c)) ** 2.)
             ealphas_imfit.append(ealpha)
 
-        l_z = self.model.nz * self.model.csize /\
+        l_z = self.model.nz * self.model.csize / \
               self.model.params['target']['dist']
 
         plt.close('all')
@@ -3138,7 +3321,8 @@ class Pipeline:
         # the logarithmic mean of the two frequencies
         freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
                    enumerate(freqs[:-1])]
-        freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for i, f in
+        freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for
+                         i, f in
                          enumerate(freqs_imfit[:-1])]
 
         ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
@@ -3151,24 +3335,7 @@ class Pipeline:
                                 np.log10(np.max(xlims)), 100)
         flux_exp = []
         for freq in freqs_r86:
-            #if self.model.params['grid']['l_z'] is not None:
             f = mphys.flux_expected_r86(self.model, freq, l_z * 0.5)
-            # else:
-            #     i = np.radians(self.model.params["geometry"]["inc"])
-            #     rr, ww = self.model.rr, self.model.ww
-            #     wrs = mgeom.w_r(rr, self.model.params['geometry']['w_0'],
-            #                     self.model.params['geometry']['mod_r_0'],
-            #                     self.model.params['geometry']['r_0'],
-            #                     self.model.params['geometry']['epsilon'])
-            #     rmax = np.nanmax(np.where(ww <= wrs, rr, np.NaN))
-            #     ymax = np.sin(i) * rmax
-            #     ymax = np.arctan(ymax / (self.model.params['target']['dist'] *
-            #                              con.parsec / con.au)) / con.arcsec
-            #     ymin = np.sin(i) * self.model.params["geometry"]['mod_r_0']
-            #     ymin = np.arctan(ymin /
-            #                       (self.model.params['target']['dist'] *
-            #                        con.parsec / con.au)) / con.arcsec
-            #     f = mphys.flux_expected_r86(self.model, freq, ymax)#, ymin)
             flux_exp.append(f * 2.)  # for biconical jet
 
         alphas_r86 = []
@@ -3178,7 +3345,8 @@ class Pipeline:
 
         # Alphas are calculated at the middle of two neighbouring frequencies
         # in logarithmic space, hence the need for caclulation of freqs_a_r86
-        freqs_a_r86 = [10**np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f in
+        freqs_a_r86 = [10 ** np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f
+                       in
                        enumerate(freqs_r86[:-1])]
         if plot_reynolds:
             ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--',
@@ -3238,7 +3406,7 @@ class Pipeline:
                         metadata=pdf_metadata, dpi=300)
         return None
 
-    def jml_profile_plot(self, ax=None, savefig: bool = False):
+    def jml_profile_plot(self, ax=None, savefig: Union[bool, str] = False):
         """
         Plot ejection profile using matlplotlib and overplot pipeline's
         observational epochs
@@ -3248,8 +3416,10 @@ class Pipeline:
         ax : matplotlib.axes._axes.Axes
             Axis to plot to
 
-        times : np.array of astropy.units.quantity.Quantity instances
-            Times to calculate mass loss rates at
+        savefig: bool, str
+            Whether to save the radio plot to file. If False, will not, but if
+            a str representing a valid path will save to that path.
+
         Returns
         -------
         numpy.array giving mass loss rates
@@ -3280,8 +3450,8 @@ class Pipeline:
                     color='cornflowerblue', zorder=1,
                     label=r'$t_{\rm obs}$' if i == 0 else None)
 
-        ax.set_xlim(xlims)
-        ax.set_ylim(ylims)
+        ax.set_xlim(*xlims)
+        ax.set_ylim(*ylims)
 
         ax.legend(loc=1)
         ax.minorticks_on()
@@ -3293,14 +3463,15 @@ class Pipeline:
 
         return ax
 
-    def radio_plot(self, run, percentile=5., savefig=False):
+    def radio_plot(self, run: Union[ContinuumRun, RRLRun],
+                   percentile: float = 5., savefig: Union[bool, str] = False):
         """
         Generate 3 subplots of (from left to right) flux, optical depth and
         emission measure.
         
         Parameters
         ----------
-        run : dict,
+        run : ContinuumRun
             One of the ModelRun instance's runs
             
         percentile : float,
@@ -3494,18 +3665,14 @@ class Pointing(object):
         h = self.coord.ra.hms.h
         m = self.coord.ra.hms.m
         s = self.coord.ra.hms.s
-        return '{:02.0f}h{:02.0f}m{:06.3f}'.format(h, m, s)
+        return '{:02.0f}h{:02.0f}m{:06.4f}'.format(h, m, s)
 
     @property
-    def ra(self):
+    def dec(self):
         d = self.coord.dec.dms.d
         m = self.coord.dec.dms.m
         s = self.coord.dec.dms.s
         return '{:+03.0f}d{:02.0f}m{:06.3f}'.format(d, m, s)
-
-    @property
-    def dec(self):
-        return self._dec
 
     @property
     def duration(self):
@@ -3530,13 +3697,17 @@ class PointingScheme(object):
 
 
 if __name__ == '__main__':
-    from RaJePy.classes import JetModel, Pipeline
+    # from RaJePy.classes import JetModel, Pipeline
     import RaJePy as rjp
     import matplotlib.pylab as plt
     from uncertainties import ufloat as uf
     from uncertainties import umath as um
 
-    pline = Pipeline.load_pipeline('/mnt/purser_data/RaJePy/LM-N-XW/modelrun.save')
+    # pline = Pipeline.load_pipeline(
+    #     '/mnt/purser_data/RaJePy/LM-N-XW/modelrun.save')
+
+    pline = Pipeline.load_pipeline(
+        '/Users/simon/Desktop/RaJePyTest2/modelrun.save')
 
     runs_cmpltd = np.array(pline.runs)[[_.completed for _ in pline.runs]]
     epochs = list(set([_.day for _ in runs_cmpltd]))
@@ -3545,48 +3716,47 @@ if __name__ == '__main__':
     data = {e: {} for e in epochs}
 
     for prun in runs_cmpltd:
-        if prun.results['imfit'] is not None:
+        if 'imfit' in prun.results:
             d = prun.day
             nu = prun.freq
             data[d][nu] = {}
             flux = uf(prun.results['imfit']['I']['val'],
                       prun.results['imfit']['Ierr']['val'])
-            #flux = uf(prun.results['imfit']['Peak']['val'],
+            # flux = uf(prun.results['imfit']['Peak']['val'],
             #          prun.results['imfit']['PeakErr']['val'])
-            #flux = uf(prun.results['flux'], 0.)
+            # flux = uf(prun.results['flux'], 0.)
             tmaj = uf(prun.results['imfit']['DeconMaj']['val'],
                       prun.results['imfit']['DeconMajErr']['val'])
             if tmaj < 1e-10:
                 tmaj = uf(float('NaN'), float('NaN'))
             data[d][nu]['flux'] = flux
             data[d][nu]['tmaj'] = tmaj
-        
-
-    
-
-    plt.close('all')
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-
-    for epoch in data:
-        freqs = [freq for freq in data[epoch]]
-        fluxes = [data[epoch][freq]['flux'] for freq in freqs]
-        tmajs = [data[epoch][freq]['tmaj'] for freq in freqs]
-        ax1.plot(freqs, [f.n for f in fluxes], ls='-', marker='o', label=f'Day {epoch}')
-        ax2.plot(freqs, [t.n for t in tmajs], ls='-', marker='o', label=f'Day {epoch}')
-
-    for ax in (ax1, ax2):
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-
-    xs = np.logspace(*np.log10(ax1.get_xlim()), 100)
-    ys = []
-    jet_params = pline.model.params
-    for freq in xs:
-        ys.append(rjp.mphys.flux_expected_r86(pline.model, freq,
-                                              jet_params['grid']['l_z'] / 2.)
-                  * 2.)
-
-    ax1.plot(xs, ys, 'r-')
-
-    plt.show()
+    jm = pline.model
+    # plt.close('all')
+    #
+    # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    #
+    # for epoch in data:
+    #     freqs = [freq for freq in data[epoch]]
+    #     fluxes = [data[epoch][freq]['flux'] for freq in freqs]
+    #     tmajs = [data[epoch][freq]['tmaj'] for freq in freqs]
+    #     ax1.plot(freqs, [f.n for f in fluxes], ls='-', marker='o',
+    #              label=f'Day {epoch}')
+    #     ax2.plot(freqs, [t.n for t in tmajs], ls='-', marker='o',
+    #              label=f'Day {epoch}')
+    #
+    # for ax in (ax1, ax2):
+    #     ax.set_xscale('log')
+    #     ax.set_yscale('log')
+    #
+    # xs = np.logspace(*np.log10(ax1.get_xlim()), 100)
+    # ys = []
+    # jet_params = pline.model.params
+    # for freq in xs:
+    #     ys.append(rjp.mphys.flux_expected_r86(pline.model, freq,
+    #                                           jet_params['grid']['l_z'] / 2.)
+    #               * 2.)
+    #
+    # ax1.plot(xs, ys, 'r-')
+    #
+    # plt.show()

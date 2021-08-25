@@ -6,13 +6,14 @@ model run.
 import os
 import errno
 import time
-import traceback
+from typing import Tuple
 
 
 class Log:
     """
     Class to handle creation, modification and storage of log entries
     """
+
     @classmethod
     def combine_logs(cls, log1: 'Log', log2: 'Log', filename: str,
                      delete_old_logs: bool) -> 'Log':
@@ -99,8 +100,7 @@ class Log:
     def entries(self, new_entries):
         self._entries = new_entries
 
-    def add_entry(self, mtype: str, entry: 'Entry',
-                  timestamp: bool = True) -> None:
+    def add_entry(self, mtype: str, entry: str, timestamp: bool = True) -> None:
         """
         Add entry to log
 
@@ -150,24 +150,34 @@ class Log:
             f.write(prefix + entry.__str__())
 
 
+class EntryMetaClass(type):
+    def __init__(cls, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        cls._valid_mtypes = ("INFO", "ERROR", "WARNING")
+        cls._mtype_max_len = max([len(_) for _ in cls.valid_mtypes])
 
-class Entry:
-    """
-    Entry class for use with Log class
-    """
-    _valid_mtypes = ("INFO", "ERROR", "WARNING")
-    _mtype_max_len = max([len(_) for _ in _valid_mtypes])
-
-    @classmethod
+    @property
     def valid_mtypes(cls):
         return cls._valid_mtypes
 
-    @classmethod
+    @valid_mtypes.setter
+    def valid_mtypes(cls, mtypes: Tuple):
+        cls._valid_mtypes = mtypes
+
+    @property
     def mtype_max_len(cls):
         return cls._mtype_max_len
 
-    def __init__(self, mtype: str, entry: str,# calling_obj: str,
-                 timestamp: bool = True):
+    @mtype_max_len.setter
+    def mtype_max_len(cls, max_len: int):
+        cls._mtype_max_len = max_len
+
+
+class Entry(metaclass=EntryMetaClass):
+    """
+    Entry class for use with Log class
+    """
+    def __init__(self, mtype: str, entry: str, timestamp: bool = True):
         """
         Parameters
         ----------
@@ -175,8 +185,6 @@ class Entry:
             Message type. One of 'INFO', 'ERROR' or 'WARNING' (any case)
         entry: str
             Entry message
-        calling_obj: str
-            Object name instantiating the Entry
         timestamp: bool
             Whether to include the timestamp in the log entry string
         Returns
@@ -190,7 +198,7 @@ class Entry:
         if not isinstance(entry, str):
             raise TypeError("entry must be a str")
 
-        if mtype.upper() not in Entry.valid_mtypes():
+        if mtype.upper() not in Entry.valid_mtypes:
             raise TypeError("mtype must be one of '" +
                             "', '".join(self._valid_mtypes[:-1]) + "' or '" +
                             self._valid_mtypes[-1] + "'")
@@ -208,7 +216,7 @@ class Entry:
 
     def __str__(self):
         preamble = ':: '.join([self.time_str(),
-                               format(self.mtype, str(Entry._mtype_max_len))])
+                               format(self.mtype, str(Entry.mtype_max_len))])
 
         if not self.timestamp:
             preamble = ' ' * len(preamble)
@@ -222,8 +230,6 @@ class Entry:
         fmt_message = '\n'.join(fmt_message)
 
         return ': '.join([preamble, fmt_message])
-        # else:
-        #     return ' ' * (len(preamble) + 2) + ': '.join([self.mtype, self.message])
 
     @property
     def rtime(self):
@@ -232,7 +238,7 @@ class Entry:
     @property
     def message(self):
         return self._message
-    
+
     @property
     def mtype(self):
         return self._mtype
@@ -244,29 +250,19 @@ class Entry:
     def time_str(self, fmt='%d%B%Y-%H:%M:%S'):
         return time.strftime(fmt, self.mtime).upper()
 
+
 if __name__ == '__main__':
     import numpy as np
 
-    log1 = Log(os.path.expanduser("~") + os.sep + "testlog1.log")
-    log2 = Log(os.path.expanduser("~") + os.sep + "testlog2.log")
+    l1 = Log(os.path.expanduser("~") + os.sep + "testlog1.log")
+    l2 = Log(os.path.expanduser("~") + os.sep + "testlog2.log")
 
-    for n in range(20):
-        if n % 2 == 0:
-            log1.add_entry(np.random.choice(Entry._valid_mtypes), str(n))
+    for num in range(20):
+        if num % 2 == 0:
+            l1.add_entry(np.random.choice(Entry.valid_mtypes), str(num))
         else:
-            log2.add_entry(np.random.choice(Entry._valid_mtypes), str(n))
+            l2.add_entry(np.random.choice(Entry.valid_mtypes), str(num))
 
-    log3 = Log.combine_logs(log1, log2,
+    log3 = Log.combine_logs(l1, l2,
                             os.path.expanduser("~") + os.sep + "testlog3.log",
                             True)
-
-    # rtimes = [(log1, log1.entries[k], log1.entries[k].rtime) for k in log1.entries]
-    # rtimes += [(log2, log2.entries[k], log2.entries[k].rtime) for k in log2.entries]
-    # rtimes = sorted(rtimes, key=lambda x: x[2])
-    #
-    # all_entries = {n: rtimes[i][1] for i, n in enumerate(range(len(rtimes)))}
-    
-    # log3 = Log(os.path.expanduser("~") + os.sep + "testlog3.log")
-    # log3.entries = all_entries
-    # for n in log3.entries:
-    #     log3.write_entry(log3.entries[n])

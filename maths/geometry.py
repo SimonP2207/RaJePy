@@ -2,14 +2,14 @@
 """
 Module handling all mathematical functions and methods
 """
-
+from typing import Union, Callable
 import numpy as np
 from collections.abc import Iterable
 import scipy.constants as con
 from scipy.special import hyp2f1
 
 
-def mod_r_0(opang, epsilon, w_0):
+def mod_r_0(opang: float, epsilon: float, w_0: float) -> float:
     """
     Calculates 'modified' launching radius i.e. the radius, r_0, at which a
     standard Reynolds (1986) jet would have a width, w_0, whilst maintaining a
@@ -30,7 +30,65 @@ def mod_r_0(opang, epsilon, w_0):
     """
     return epsilon * w_0 / np.tan(np.radians(opang) / 2.)
 
-def t_rw(r, w, params):
+
+def rho(r: Union[float, Iterable], r_0: float,
+        mr0: Union[None, float] = None) -> Union[float, Iterable]:
+    """
+    Calculates distance along r-axis in units of r_0 in the case whereby
+    mod_r_0 is None (default, as per Reynolds 1986). In the case mod_r_0 is
+    not None, the equivalent distance along hte r-axis in units of mod_r_0,
+    when r is translated by a factor of (mod_r_0 - r_0). All input arg units
+    should be consistent
+
+    Parameters
+    ----------
+    r: float
+        Jet radius coordinate
+    r_0 : float
+        Launching radius
+    mr0 : float
+        Reynolds (1986)'s value for r_0 given specified geometry (see
+        RaJePy.maths.geometry.mod_r_0 method)
+
+    Returns
+    -------
+    Distance of r along r-axis in units of r_0 (if mod_r_0 arg is None) or
+    units of mod_r_0 after a translation of r by a factor of (mod_r_0 - r_0)
+    """
+    try:
+        return (np.abs(r) + mr0 - r_0) / mr0
+    except TypeError:
+        return np.abs(r) / r_0
+
+
+def w_r(r: Union[float, Iterable], w_0: float, mr0: float, r_0: float,
+        eps: float) -> Union[float, Iterable]:
+    """
+    Jet-width, w(r),  as a function of r, the distance along the jet axis
+
+    Parameters
+    ----------
+    r : float or np.ndarray
+        Distance(s) along jet axis at which to compute w
+    w_0 : float
+        Width of the jet at its base
+    mr0 : float
+        Reynolds (1986)'s value for r_0 given specified geometry (see
+        RaJePy.maths.geometry.mod_r_0 method)
+    r_0 : float
+        Launching radius
+    eps : float
+        Power-law exponent for the growth of w with r
+    Returns
+    -------
+    Jet-width at r
+    """
+    return w_0 * rho(r, r_0, mr0) ** eps
+
+
+def t_rw(r: Union[float, Iterable, np.ndarray],
+         w: Union[float, Iterable, np.ndarray],
+         params: dict) -> Union[float, Iterable, np.ndarray]:
     """
     Function to return time as a function of position (r, w) in a jet
 
@@ -50,44 +108,51 @@ def t_rw(r, w, params):
     w_0 = params['geometry']['w_0'] * con.au
     r_0 = params['geometry']['r_0'] * con.au
     v_0 = params["properties"]["v_0"] * 1e3
-    mod_r_0 = params['geometry']['mod_r_0'] * con.au
+    mr0 = params['geometry']['mod_r_0'] * con.au
     eps = params['geometry']['epsilon']
-    R_1 = params["target"]["R_1"] * con.au
-    R_2 = params["target"]["R_2"] * con.au
+    r_1 = params["target"]["R_1"] * con.au
+    r_2 = params["target"]["R_2"] * con.au
     q_v = params["power_laws"]["q_v"]
     q_vd = params["power_laws"]["q^d_v"]
 
-    # If w == 0 and q_vd < 0, NaN is ultimately returned, therefore change
-    # q_vd to 0 when w == 0 since it doesn't make any difference
-    if w == 0:
-        q_vd = 0.
-
-    # Assume biconical symmetry in ejection velocities as negative values for
-    # r results in return of NaNs
-    if r < 0:
-        r = np.abs(r)
-
-    def indef_intgrl(r, w):
+    def indef_intgrl(_r, _w):
         """
         Indefinite integral in r
         """
-        const = (w * con.au) * mod_r_0 ** eps * (R_2 - R_1) / (R_1 * w_0)
-        rad = (r * con.au) + mod_r_0 - r_0
-        num1 = rad ** (1. - q_v)
-        num2 = (1. + const * rad ** (-eps)) ** (-q_vd)
-        num3 = ((const + rad ** eps) / const) ** q_vd
-        num4 = hyp2f1(q_vd, (1. + eps * q_vd - q_v) / eps,
-                      (1. + eps + eps * q_vd - q_v) / eps,
-                      -(rad ** eps / const))
-        den = 1. + eps * q_vd - q_v
-        return mod_r_0 ** q_v / v_0 * num1 * num2 * num3 * num4 / den
+        const = mr0 ** q_v / (v_0 * (1. - q_v + eps * q_vd))
+        rad = _r + mr0 - r_0
+        p1 = rad ** (1. - q_v)
+        p2 = (r_eff(_w, r_1, r_2, w_0, _r, mr0, r_0, eps) / r_1) ** -q_vd
 
-    return (indef_intgrl(r, w) - indef_intgrl(r_0 / con.au, w)) / con.year
+        # To avoid ZeroDivisionError when w = 0
+        if _w == 0.:
+            p3 = 1.0
+            # Factor of 1. + q_vd / (1. - q_v) introduced here as computed times
+            # are always too large at w = 0
+            p4 = 1. + q_vd / (1. - q_v)
+        else:
+            p3 = ((r_1 * w_0 * rad ** eps) /
+                  (_w * mr0 ** eps * (r_2 - r_1)) + 1.) ** q_vd
+            p4 = hyp2f1(q_vd, (1. - q_v + eps * q_vd) / eps,
+                        (1. - q_v + eps + eps * q_vd) / eps,
+                        (r_1 * w_0 * rad ** eps) /
+                        (_w * mr0 ** eps * (r_1 - r_2)))
 
-def disc_angle(x, y, z,
-               inc, pa):
-    """Returns position angle (in radians) of originating point in the disc of
-    point in the jet stream, in the disc plane (counter-clockwise from east)"""
+        return const * p1 * p2 * p3 * p4
+    indef_intgrl = np.vectorize(indef_intgrl)
+
+    return (indef_intgrl(np.abs(r) * con.au, w * con.au) -
+            indef_intgrl(r_0, w * con.au)) / con.year
+
+
+def disc_angle(x: Union[float, Iterable],
+               y: Union[float, Iterable],
+               z: Union[float, Iterable],
+               inc: float, pa: float) -> Union[float, np.ndarray]:
+    """
+    Returns position angle (in radians) of originating point in the disc of
+    point in the jet stream, in the disc plane (counter-clockwise from east)
+    """
     i = np.radians(90. - inc)
     pa = np.radians(pa)
 
@@ -105,41 +170,69 @@ def disc_angle(x, y, z,
     return np.arctan2(p[1], p[0])
 
 
-def r_eff(w, R_1, R_2, w_0, r, mod_r_0, r_0, eps):
-    return R_1 + (mod_r_0 ** eps * (R_2 - R_1) * w) /\
-           (w_0 * (r + mod_r_0 - r_0) ** eps)
+def r_eff(w: Union[float, np.ndarray], r_1: float, r_2: float, w_0: float,
+          r: Union[float, np.ndarray], mr0: float, r_0: float,
+          eps: float) -> Union[float, np.ndarray]:
+    """
+    Radius at which the material at jet-coordinates (w, r) was ejected from
+    the accretion disc at
+
+    Parameters
+    ----------
+    w : float, Iterable
+        Jet w-coordinate
+    r_1 : float
+        Inner radius of disc for launch of material
+    r_2 : float
+        Inner radius of disc for launch of material
+    w_0 : float
+        Width of the jet at its base
+    r : float, Iterable
+        Jet r-coordinate
+    mr0 : float
+        Reynolds (1986)'s value for r_0 given specified geometry (see
+        RaJePy.maths.geometry.mod_r_0 method)
+    r_0 : float
+        Launching radius
+    eps : float
+        Power-law exponent for the growth of w with r
+
+    Returns
+    -------
+    Effective radius at coordinate (w, r)
+    """
+    return r_1 + ((r_2 - r_1) * w) / w_r(r, w_0, mr0, r_0, eps)
 
 
-def w_r(r, w_0, mod_r_0, r_0, eps):
-    return w_0 * ((r + mod_r_0 - r_0) / mod_r_0) ** eps
-
-
-def y1_y2(x, z, w_0, r_0, mod_r_0, inc):
+def y1_y2(x: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
+          r_0: float, mr0: float, inc: float) -> Union[float, Iterable]:
     i = np.radians(inc)
     y = (np.array([-1., 1]) *
          np.sqrt((-2. * r_0 * w_0 ** 2. * np.cos(i) +
-                   2. * mod_r_0 * w_0 ** 2. * np.cos(i) +
-                   mod_r_0 ** 2. * z * np.sin(2. * i) +
-                   2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
-                  4. * (w_0 ** 2. * np.cos(i) ** 2. -
-                        mod_r_0 ** 2. * np.sin(i) ** 2.) *
-                  (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
-                   2. * mod_r_0 * w_0 ** 2. * z * np.sin(i) +
-                   mod_r_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                   w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                   r_0 ** 2. * w_0 ** 2. + mod_r_0 ** 2. * w_0 ** 2. -
-                   2. * r_0 * mod_r_0 * w_0 ** 2. - mod_r_0 ** 2. * x ** 2. -
-                   mod_r_0 ** 2. * z ** 2.)) -
+                  2. * mr0 * w_0 ** 2. * np.cos(i) +
+                  mr0 ** 2. * z * np.sin(2. * i) +
+                  2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
+                 4. * (w_0 ** 2. * np.cos(i) ** 2. -
+                       mr0 ** 2. * np.sin(i) ** 2.) *
+                 (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
+                  2. * mr0 * w_0 ** 2. * z * np.sin(i) +
+                  mr0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+                  w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+                  r_0 ** 2. * w_0 ** 2. + mr0 ** 2. * w_0 ** 2. -
+                  2. * r_0 * mr0 * w_0 ** 2. - mr0 ** 2. * x ** 2. -
+                  mr0 ** 2. * z ** 2.)) -
          2. * r_0 * w_0 ** 2. * np.cos(i) +
-         2. * mod_r_0 * w_0 ** 2. * np.cos(i) +
-         mod_r_0 ** 2. * z * np.sin(2. * i) +
-         2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) /\
-        (2. * (mod_r_0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(i) ** 2.))
+         2. * mr0 * w_0 ** 2. * np.cos(i) +
+         mr0 ** 2. * z * np.sin(2. * i) +
+         2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) / \
+        (2. * (mr0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(i) ** 2.))
     return y
 
 
-def y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='lower'):
-    """For use with scipy.integrate functions for establishing upper/lower
+def y1_y2_wrapped(w_0: float, r_0: float, mr0: float, inc: float,
+                  bound: str = 'lower') -> Callable:
+    """
+    For use with scipy.integrate functions for establishing upper/lower
     bounds in y (first integrated variable)
 
     Parameters
@@ -148,7 +241,7 @@ def y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='lower'):
         Jet half-width
     r_0: float
         Jet ejection radius
-    mod_r_0: float
+    mr0: float
         Modified ejection radius
     inc: float
         Inclination in degrees
@@ -161,40 +254,45 @@ def y1_y2_wrapped(w_0, r_0, mod_r_0, inc, bound='lower'):
     lower-bounds of the first integrated variable, which takes two arguments, z
     and x.
     """
+
     def func(z, x):
         i = np.radians(inc)
         y = (np.array([-1., 1]) *
              np.sqrt((-2. * r_0 * w_0 ** 2. * np.cos(i) +
-                       2. * mod_r_0 * w_0 ** 2. * np.cos(i) +
-                       mod_r_0 ** 2. * z * np.sin(2. * i) +
-                       2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
-                      4. * (w_0 ** 2. * np.cos(i) ** 2. -
-                            mod_r_0 ** 2. * np.sin(i) ** 2.) *
-                      (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
-                       2. * mod_r_0 * w_0 ** 2. * z * np.sin(i) +
-                       mod_r_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                       w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                       r_0 ** 2. * w_0 ** 2. + mod_r_0 ** 2. * w_0 ** 2. -
-                       2. * r_0 * mod_r_0 * w_0 ** 2. - mod_r_0 ** 2. * x ** 2. -
-                       mod_r_0 ** 2. * z ** 2.)) -
+                      2. * mr0 * w_0 ** 2. * np.cos(i) +
+                      mr0 ** 2. * z * np.sin(2. * i) +
+                      2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
+                     4. * (w_0 ** 2. * np.cos(i) ** 2. -
+                           mr0 ** 2. * np.sin(i) ** 2.) *
+                     (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
+                      2. * mr0 * w_0 ** 2. * z * np.sin(i) +
+                      mr0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+                      w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+                      r_0 ** 2. * w_0 ** 2. + mr0 ** 2. * w_0 ** 2. -
+                      2. * r_0 * mr0 * w_0 ** 2. - mr0 ** 2. * x ** 2. -
+                      mr0 ** 2. * z ** 2.)) -
              2. * r_0 * w_0 ** 2. * np.cos(i) +
-             2. * mod_r_0 * w_0 ** 2. * np.cos(i) +
-             mod_r_0 ** 2. * z * np.sin(2. * i) +
-             2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) /\
-            (2. * (mod_r_0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(i) ** 2.))
+             2. * mr0 * w_0 ** 2. * np.cos(i) +
+             mr0 ** 2. * z * np.sin(2. * i) +
+             2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) / \
+            (2. * (mr0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(
+                i) ** 2.))
         return y[['lower', 'upper'].index(bound)]
+
     return func
 
 
-def w_r_wrapped(w_0, mod_r_0, r_0, eps, inc, bound='lower'):
-    """For use with scipy.integrate functions for establishing upper/lower
+def w_r_wrapped(w_0: float, mr0: float, r_0: float, eps: float, inc: float,
+                bound: str = 'lower') -> Callable:
+    """
+    For use with scipy.integrate functions for establishing upper/lower
     bounds in x (second integrated variable). Assumes position angle is 0.
 
     Parameters
     ----------
     w_0: float
         Jet half-width
-    mod_r_0: float
+    mr0: float
         Modified ejection radius
     r_0: float
         Jet ejection radius
@@ -211,16 +309,41 @@ def w_r_wrapped(w_0, mod_r_0, r_0, eps, inc, bound='lower'):
     lower-bounds of the first integrated variable, which takes two arguments, z
     and x.
     """
-    def func(z):
+
+    def func(z: Union[float, Iterable]) -> Union[float, Iterable]:
         # Assuming position angle is 0.
         i = np.radians(inc)
         r = z / np.sin(i)
         fac = [-1, 1][['lower', 'upper'].index(bound)]
-        return w_0 * ((r + mod_r_0 - r_0) / mod_r_0) ** eps * fac
+        return w_r(r, w_0, mr0, r_0, eps) * fac
+
     return func
 
 
-def xyz_to_rwp(x, y, z, inc, pa):
+def xyz_to_rwp(x: Union[float, Iterable],
+               y: Union[float, Iterable],
+               z: Union[float, Iterable],
+               inc: float, pa: float) -> Union[float, Iterable]:
+    """
+    Converts (x, y, z) coordinate to jet-system coordinates (r, w, phi)
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate
+    y : float
+        y-coordinate
+    z : float
+        z-coordinate
+    inc : float
+        Inclination of system (deg)
+    pa : float
+        Position angle of system (deg)
+
+    Returns
+    -------
+    Tuple of r, w, and phi coordinate arrays
+    """
     i = np.radians(inc)
     t = np.radians(pa)
     r = x * np.sin(i) * np.sin(t) + y * np.cos(i) + z * np.sin(i) * np.cos(t)
@@ -234,7 +357,8 @@ def xyz_to_rwp(x, y, z, inc, pa):
     return r, w, p
 
 
-def w_xy(x, y, w_0, r_0, eps, opang):
+def w_xy(x: Union[float, Iterable], y: Union[float, Iterable], w_0: float,
+         r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
     """
     Compute z-coordinate(s) of jet-boundary point given its x and y
     coordinates.
@@ -260,32 +384,17 @@ def w_xy(x, y, w_0, r_0, eps, opang):
         z-coordinate(s) corresponding to supplied x/y coordinate(s) of jet
         boundary.
     """
-    # for idx, coord in enumerate([x, y]):
-    #     if isinstance(coord, (float, np.floating)):
-    #         pass
-    #     elif isinstance(coord, (int, np.integer)):
-    #         if idx:
-    #             y = float(y)
-    #         else:
-    #             x = float(x)
-    #     elif isinstance(coord, Iterable):
-    #         if idx:
-    #             y = np.array(y, dtype='float')
-    #         else:
-    #             x = np.array(x, dtype='float')
-    #     else:
-    #         raise TypeError(["x", "y"][idx] +
-    #                         "-coordinate(s) must be float or Iterable")
-    mod_r_0 = eps * w_0 / np.tan(np.radians(opang / 2.))
+    mr0 = mod_r_0(opang, eps, w_0)
 
-    z = mod_r_0 * ((x**2. + y**2.)**.5 / w_0)**(1. / eps)
-    z -= mod_r_0
+    z = mr0 * ((x ** 2. + y ** 2.) ** .5 / w_0) ** (1. / eps)
+    z -= mr0
     z += r_0
 
     return np.where(z > r_0, z, r_0)
 
 
-def w_xz(x, z, w_0, r_0, eps, opang):
+def w_xz(x: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
+         r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
     """
     Compute y-coordinate(s) of jet-boundary point given its x and z
     coordinates.
@@ -311,31 +420,14 @@ def w_xz(x, z, w_0, r_0, eps, opang):
         y-coordinate(s) corresponding to supplied x/z coordinate(s) of jet
         boundary.
     """
-    # for idx, coord in enumerate([x, z]):
-    #     if isinstance(coord, (float, np.floating)):
-    #         pass
-    #     elif isinstance(coord, (int, np.integer)):
-    #         if idx:
-    #             z = float(z)
-    #         else:
-    #             x = float(x)
-    #     elif isinstance(coord, Iterable):
-    #         if idx:
-    #             x = np.array(x, dtype='float')
-    #         else:
-    #             z = np.array(z, dtype='float')
-    #     else:
-    #         raise TypeError(["x", "z"][idx] +
-    #                         "-coordinate(s) must be float or Iterable")
-
-    mod_r_0 = eps * w_0 / np.tan(np.radians(opang / 2.))
-    y = (w_0**2. * ((z + mod_r_0 - r_0) / mod_r_0)**(2. * eps) - x**2.)
+    y = (w_r(z, w_0, mod_r_0(opang, eps, w_0), r_0, eps) ** 2. - x ** 2.)
     y = np.abs(y) ** 0.5 * np.sign(y)
 
     return np.where(z >= r_0, y, 0.)
 
 
-def w_yz(y, z, w_0, r_0, eps, opang):
+def w_yz(y: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
+         r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
     """
     Compute x-coordinate(s) of jet-boundary point given its y and z
     coordinates.
@@ -361,25 +453,33 @@ def w_yz(y, z, w_0, r_0, eps, opang):
         x-coordinate(s) corresponding to supplied y/z coordinate(s) of jet
         boundary.
     """
-    # for idx, coord in enumerate([y, z]):
-    #     if isinstance(coord, (float, np.floating)):
-    #         pass
-    #     elif isinstance(coord, (int, np.integer)):
-    #         if idx:
-    #             y = float(y)
-    #         else:
-    #             z = float(z)
-    #     elif isinstance(coord, Iterable):
-    #         if idx:
-    #             y = np.array(y, dtype='float')
-    #         else:
-    #             z = np.array(z, dtype='float')
-    #     else:
-    #         raise TypeError(["y", "z"][idx] +
-    #                         "-coordinate(s) must be float or Iterable")
-
-    mod_r_0 = eps * w_0 / np.tan(np.radians(opang / 2.))
-    x = (w_0**2. * ((z + mod_r_0 - r_0) / mod_r_0)**(2. * eps) - y**2.)
+    x = (w_r(z, w_0, mod_r_0(opang, eps, w_0), r_0, eps) ** 2. - y ** 2.)
     x = np.abs(x) ** 0.5 * np.sign(x)
 
     return np.where(z >= r_0, x, 0.)
+
+
+if __name__ == "__main__":
+    prms = {'geometry': {}, 'power_laws': {}, 'target': {}, 'properties': {}}
+    prms['geometry']['w_0'] = 1.0
+    prms['geometry']['r_0'] = 1.0
+    prms["properties"]["v_0"] = 500.
+    prms['geometry']['mod_r_0'] = 4.451
+    prms['geometry']['epsilon'] = 1.
+    prms["target"]["R_1"] = 0.5
+    prms["target"]["R_2"] = 5.0
+    prms["power_laws"]["q_v"] = -0.6
+    prms["power_laws"]["q^d_v"] = -0.2
+
+    rs = np.array([834., 49.23415, 49.23415])
+    ws = np.array([0.0000, 0.0001, 0.000])
+    print(t_rw(rs, ws, prms))
+    print((rs - prms['geometry']['r_0']) * con.au /
+          (prms["properties"]["v_0"] * 1e3) / con.year)
+
+    q = 1. - prms["power_laws"]["q_v"]
+    print(((prms['geometry']['mod_r_0'] * con.au) ** prms["power_laws"]["q_v"] /
+           (prms["properties"]["v_0"] * 1e3 * q))
+          * (((rs + prms['geometry']['mod_r_0'] -
+               prms['geometry']['r_0']) * con.au) ** q -
+             (prms['geometry']['mod_r_0'] * con.au) ** q) / con.year)

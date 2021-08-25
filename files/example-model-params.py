@@ -19,27 +19,27 @@ params = {
                "v_lsr": 0.0,  # km/s
                "M_star": 10.,  # M_sol in arcsec
                "R_1": .5,  # inner disc radii sourcing the jet in au
-               "R_2": 2.5,  # outer disc radii sourcing the jet in au
+               "R_2": 5.,  # outer disc radii sourcing the jet in au
                },
     "grid": {"n_x": 50,  # No. of cells in x
              "n_y": 400,  # No. of cells in y
              "n_z": 50,  # No. of cells in z
-             "l_z": 1.,  # Length of z-axis. Overrides n_x/n_y/n_z.
+             "l_z": 0.25,  # Length of z-axis. Overrides n_x/n_y/n_z.
              "c_size": 2.5,  # Cell size (au)
              },
     "geometry": {"epsilon": 9. / 9.,  # Jet width index
                  "opang": 30.,  # Jet opening angle (deg)
                  "w_0": 2.5,  # Half-width of jet base (au)
-                 "r_0": 2.5,  # Launching radius (au)
+                 "r_0": 9.330127018922193,  # Launching radius (au)
                  "inc": 90.,  # Inclination angle (deg)
                  "pa": 0.,  # Jet position PA (deg)
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
                    "q_T": 0.,  # Temperature index
                    "q_x": 0.,  # Ionisation fraction index
-                   "q^d_n": 0. / 8., # Cross-sectional density index
-                   "q^d_T": 0., # Cross-sectional temperature index
-                   "q^d_v": 0., # Cross-sectional velocity index
+                   "q^d_n": -0.5,  # Cross-sectional density index
+                   "q^d_T": 0.,  # Cross-sectional temperature index
+                   "q^d_v": -0.5,  # Cross-sectional velocity index
                    "q^d_x": 0.  # Cross-sectional ionisation fraction index
                    },
     "properties": {"v_0": 500.,  # Ejection velocity (km/s)
@@ -49,11 +49,11 @@ params = {
                    "mu": 1.3,  # Mean atomic weight (m_H)
                    "mlr": 1e-5,  # Msol / yr
                    },
-    "ejection": {"t_0": np.array([1.]),  # Peak times of bursts (yr)
-                 "hl": np.array([0.2]),  # Half-lives of bursts (yr)
-                 "chi": np.array([10.]),  # Burst factors
+    "ejection": {"t_0": np.array([]),  # Peak times of bursts (yr)
+                 "hl": np.array([]),  # Half-lives of bursts (yr)
+                 "chi": np.array([]),  # Burst factors
                  }
-             }
+}
 # ############################################################################ #
 # ####################### DO NOT CHANGE BELOW ################################ #
 # ############################################################################ #
@@ -72,15 +72,19 @@ params["power_laws"]["q_tau"] = params["geometry"]["epsilon"] + \
                                 2.0 * params["power_laws"]["q_n"] - \
                                 1.35 * params["power_laws"]["q_T"]
 
+
 # Derive initial number density of jet given the defined mass-loss rate by:
 # 1.) Integrating r_eff from 0 --> w_0 to give 'effective area' of jet base
 def n_w(w_0, R_1, R_2, q_nd, q_vd):
     """Decorator function of integrand for number density, n, as a function of
     jet width, w"""
+
     def func(w):
         return 2. * np.pi * w * (1 + (w * (R_2 - R_1)) /
                                  (R_1 * w_0)) ** (q_nd + q_vd)
+
     return func
+
 
 f = n_w(params["geometry"]["w_0"] * con.au * 1e2,
         params["target"]["R_1"] * con.au * 1e2,
@@ -90,11 +94,12 @@ result = quad(f, 0, params["geometry"]["w_0"] * con.au * 1e2)
 
 # 2.) Use given mass loss rate divided by initial velocity to calculate
 # initial number density
-mu = 1.673532838e-27 * params["properties"]["mu"] # average particle mass in kg
+mu = 1.673532838e-27 * params["properties"]["mu"]  # average particle mass in kg
 ndot = params['properties']['mlr'] * 1.989e30 / con.year / mu  # particles / s
 v_0 = params['properties']['v_0'] * 1e5  # cm / s
 params['properties']['n_0'] = ndot / (result[0] * v_0)  # cm^-3
 # ############################################################################ #
 if __name__ == '__main__':
     from RaJePy.miscellaneous import functions
+
     print(functions.check_model_params(params))

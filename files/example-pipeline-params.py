@@ -15,7 +15,7 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
           'dcys':      {"model_dcy": os.sep.join([os.path.expanduser('~'),
                                                  "Desktop", "RaJePyTest"])},
           # Continuum observations
-          'continuum': {'times':  np.linspace(0., 2., 20.),  # yr
+          'continuum': {'times': np.array([0.]),# np.linspace(0., 2., 20),  # yr
                         'freqs':  np.array([0.058, 0.142, 0.323, 0.608,  # Hz
                                             1.5, 3.0, 6., 10., 22., 33.,
                                             43.])[-1:] * 1e9,
@@ -35,7 +35,7 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
                                             4e9, 8e9])[6:7],  # Hz
                         'chanws': np.array([1e9] * 11)[6:7]},  # int
           # Radio recombination line observations
-          'rrls':      {'times':  np.linspace(0., 5., 21)[:1],  # yr
+          'rrls':      {'times':  np.array([], dtype=float),#,  # yr
                         'lines':  np.array(["H58a"]),  # str (Element+n+dn)
                         't_obs':  np.array([60 * 60 * 10]),  # secs
                         'tscps':  np.array([('VLA', 'A')]),  # (tscop, config)

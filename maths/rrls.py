@@ -101,7 +101,8 @@ def deltanu_l(n_e: float, n: int, delta_n: int, gamma: float = 4.5) -> float:
     return 8.2 * n_e * (n / 100.) ** gamma * (1. + gamma / 2. * delta_n / n)
 
 
-def deltanu_g(nu_0: float, temp: float, atom: str) -> float:
+def deltanu_g(nu_0: float, temp: Union[float, np.ndarray],
+              atom: str) -> Union[float, np.ndarray]:
     """
     Full-width at half maximum line width (Hz) for purely thermal (Doppler),
     Gaussian broadening. Equation 2.21 of Gordon & Sorochenko.
@@ -360,7 +361,8 @@ def phi_voigt_nu(nu_0: float, fwhm_stark: Union[Iterable, float],
 
 def kappa_l(freq: float, n: int, oscillator_strength: float,
             line_profile_contribution: float, n_e: float, n_i: float,
-            temp: float, z: int, energy_n1: float) -> float:
+            temp: Union[float, np.ndarray],
+            z: int, energy_n1: float) -> Union[float, np.ndarray]:
     """
     RRL absorption coefficient, kappa_L (cm^-1). Equation 2.114 of Gordon &
     Sorochenko. Note that all calculations are performed in cgs units.
@@ -423,10 +425,10 @@ def kappa_l_average(freq: float, n: int, oscillator_strength: float,
 kappa_l_average = np.vectorize(kappa_l_average)
 
 
-def line_intensity_lte(freq: Union[float, Iterable],
-                       temp: Union[float, Iterable],
-                       tau_c: Union[float, Iterable],
-                       tau_l: Union[float, Iterable]) -> Union[float, Iterable]:
+def line_intensity_lte(freq: Union[float, Iterable, np.ndarray],
+                       temp: Union[float, Iterable, np.ndarray],
+                       tau_c: Union[float, Iterable, np.ndarray],
+                       tau_l: Union[float, Iterable, np.ndarray]) -> Union[float, Iterable, np.ndarray]:
     """
     Intensity of the RRL assuming local thermodynamic equilibrium (LTE).
     Equation 2.122 of Gordon & Sorochenko (2002).
@@ -624,7 +626,7 @@ def rrl_parser(rrl_str: str) -> Tuple[str, int, int]:
 
 if __name__ == '__main__':
     # Example usage below
-    import matplotlib.pylab as plt
+    # import matplotlib.pylab as plt
 
     # ######################################################################## #
     # ############################## Input ################################### #
@@ -703,26 +705,26 @@ if __name__ == '__main__':
     # ######################################################################## #
     # ############################## Plotting ################################ #
     # ######################################################################## #
-    plt.close('all')
-
-    fig, ax = plt.subplots(1, 1, figsize=(5., 5.))
-
-    ax.plot(nus, phi_v(nus), ls='-', lw=2, color='cornflowerblue', zorder=2)
-    ylims = [0, ax.get_ylim()[1]]
-    ax.vlines(obs_freq + np.array([-chan_width, chan_width]) / 2.,
-              [ylims[0]] * 2, [ylims[1]] * 2, ls='-', color='firebrick',
-              lw=0.5, zorder=3)
-    ax.set_xlim(freq_range)
-    ax.set_ylim(ylims)
-
-    ax.set_xlabel(r'$\nu\,\left[\mathrm{Hz}\right]$')
-    ax.set_ylabel(r'$\phi\left(\nu\right)'
-                  r'\,\left[\mathrm{Hz}^{-1}\right]$')
-
-    ax.set_title(r'$\mathrm{{{}}}{}{}$'.format(element, rrl_n,
-                                               {1: r'\alpha',
-                                                2: r'\beta',
-                                                3: r'\gamma',
-                                                4: r'\delta'}[rrl_dn]))
-
-    plt.show()
+    # plt.close('all')
+    #
+    # fig, ax = plt.subplots(1, 1, figsize=(5., 5.))
+    #
+    # ax.plot(nus, phi_v(nus), ls='-', lw=2, color='cornflowerblue', zorder=2)
+    # ylims = [0, ax.get_ylim()[1]]
+    # ax.vlines(obs_freq + np.array([-chan_width, chan_width]) / 2.,
+    #           [ylims[0]] * 2, [ylims[1]] * 2, ls='-', color='firebrick',
+    #           lw=0.5, zorder=3)
+    # ax.set_xlim(freq_range)
+    # ax.set_ylim(ylims)
+    #
+    # ax.set_xlabel(r'$\nu\,\left[\mathrm{Hz}\right]$')
+    # ax.set_ylabel(r'$\phi\left(\nu\right)'
+    #               r'\,\left[\mathrm{Hz}^{-1}\right]$')
+    #
+    # ax.set_title(r'$\mathrm{{{}}}{}{}$'.format(element, rrl_n,
+    #                                            {1: r'\alpha',
+    #                                             2: r'\beta',
+    #                                             3: r'\gamma',
+    #                                             4: r'\delta'}[rrl_dn]))
+    #
+    # plt.show()
