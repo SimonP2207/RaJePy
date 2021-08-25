@@ -75,10 +75,12 @@ if __name__ == '__main__':
         pline = Pipeline(JetModel(jet_param_file), pline_param_file)
         pline.execute(resume=False, clobber=False)
 
-
     for f in (jet_param_file, pline_param_file):
         dest = os.sep.join([pline.params['dcys']['model_dcy'],
                             os.path.basename(f)])
         dest = os.path.expanduser(dest)
         if f != dest:
-            shutil.copyfile(f, dest)
+            try:
+                shutil.copyfile(f, dest)
+            except shutil.SameFileError:
+                pass

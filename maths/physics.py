@@ -99,7 +99,7 @@ def tau_r_from_jm(jm, freq, r) -> float:
     epsilon = jm.params["geometry"]["epsilon"]  # dimensionless
 
     return tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc,
-                 epsilon, q_n, q_x, q_T, opang, dist=d)
+                 epsilon, q_n, q_x, q_T, opang)
 
 
 def r_tau1(r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T, opang,
