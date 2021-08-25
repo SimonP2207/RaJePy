@@ -83,4 +83,4 @@ if __name__ == '__main__':
             try:
                 shutil.copyfile(f, dest)
             except shutil.SameFileError:
-                pass
+                print(f"{f} and {dest} are the same file")
