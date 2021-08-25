@@ -1852,22 +1852,30 @@ class JetModel:
         cs = br_ax.transAxes.transform((0.15, 0.5))
         cs = br_ax.transData.inverted().transform(cs)
 
-        v_scale = np.ceil(np.max(vzs) / 10 ** np.floor(np.log10(np.max(vzs))))
-        v_scale *= 10 ** np.floor(np.log10(np.max(vzs)))
+        # TODO: Find less hacky way to deal with this
+        # This throws an error when the model is inclined so much that a slice
+        # through the middle results in an empty array when NaNs are removed,
+        # therefore skip rest of plotting code for br_ax if so
+        try:
+            v_scale = np.ceil(np.max(vzs) /
+                              10 ** np.floor(np.log10(np.max(vzs))))
+            v_scale *= 10 ** np.floor(np.log10(np.max(vzs)))
 
-        # Max arrow length is 0.1 * the height of the subplot
-        scale = v_scale * 0.1 ** -1.
-        br_ax.quiver(xs, zs, np.zeros((len(xs),)), vzs,
-                     color='w', scale=scale,
-                     scale_units='height')
+            # Max arrow length is 0.1 * the height of the subplot
+            scale = v_scale * 0.1 ** -1.
+            br_ax.quiver(xs, zs, np.zeros((len(xs),)), vzs,
+                         color='w', scale=scale,
+                         scale_units='height')
 
-        br_ax.quiver(cs[0], cs[1], [0.], [v_scale], color='k', scale=scale,
-                     scale_units='height', pivot='tail')
+            br_ax.quiver(cs[0], cs[1], [0.], [v_scale], color='k', scale=scale,
+                         scale_units='height', pivot='tail')
 
-        br_ax.annotate(r'$' + format(v_scale, '.0f') + '$\n$' +
-                       r'\rm{km/s}$', cs, xytext=(0., -5.),  # half fontsize
-                       xycoords='data', textcoords='offset points', va='top',
-                       ha='center', multialignment='center', fontsize=10)
+            br_ax.annotate(r'$' + format(v_scale, '.0f') + '$\n$' +
+                           r'\rm{km/s}$', cs, xytext=(0., -5.),  # half fontsize
+                           xycoords='data', textcoords='offset points', va='top',
+                           ha='center', multialignment='center', fontsize=10)
+        except ValueError:
+            pass
 
         axes = [tl_ax, tr_ax, bl_ax, br_ax]
         caxes = [tl_cax, tr_cax, bl_cax, br_cax]
