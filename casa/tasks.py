@@ -264,7 +264,7 @@ class Tclean(_CasaTask):
               'usemask': (str, 'user'),
               'mask': (str, ''),
               'pbmask': (float, 0.0),
-              'fastnoise': (bool, True),
+#              'fastnoise': (bool, True),
               'restart': (bool, False),
               'savemodel': (str, 'none'),
               'calcres': (bool, True),
