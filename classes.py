@@ -205,7 +205,8 @@ class JetModel:
         self._v = None  # 3-tuple of cell x, y and z velocity components
 
         mlr = self.params['properties']['n_0'] * 1e6 * np.pi  # m^-3
-        mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H")  #kg/m^3
+        mlr *= self.params['properties']['mu'] * mphys.atomic_mass(
+            "H")  # kg/m^3
         mlr *= (self.params['geometry']['w_0'] * con.au) ** 2.  # kg/m
         mlr *= self.params['properties']['v_0'] * 1e3  # kg/s
 
@@ -544,8 +545,8 @@ class JetModel:
         if True in (refl_sym_x, refl_sym_y, refl_sym_z):
             if False not in (refl_sym_x, refl_sym_y, refl_sym_z):
                 xx, yy, zz = [_[int(self.nx / 2):,
-                                int(self.ny / 2):,
-                                int(self.nz / 2):] for _ in self.grid]
+                              int(self.ny / 2):,
+                              int(self.nz / 2):] for _ in self.grid]
             else:
                 if refl_sym_x is True:
                     xx, yy, zz = [_[int(self.nx / 2):, :, :] for _ in self.grid]
@@ -867,7 +868,6 @@ class JetModel:
         av_m_particle = self.params['properties']['mu'] * mphys.atomic_mass("H")
 
         return av_m_particle * 1e3 * self.number_density
-
 
     @property
     def ion_fraction(self) -> np.ndarray:
@@ -1258,7 +1258,7 @@ class JetModel:
 
                 tau = (0.018 * self.temperature ** -1.5 * nu ** -2. *
                        n_es ** 2. * (self.csize * con.au * 1e2 *
-                                    (self.fill_factor / self.areas)) * gff)
+                                     (self.fill_factor / self.areas)) * gff)
                 tff[idx] = np.nansum(tau, axis=1).T
 
         else:
@@ -1872,7 +1872,8 @@ class JetModel:
 
             br_ax.annotate(r'$' + format(v_scale, '.0f') + '$\n$' +
                            r'\rm{km/s}$', cs, xytext=(0., -5.),  # half fontsize
-                           xycoords='data', textcoords='offset points', va='top',
+                           xycoords='data', textcoords='offset points',
+                           va='top',
                            ha='center', multialignment='center', fontsize=10)
         except ValueError:
             pass
@@ -2547,16 +2548,14 @@ class Pipeline:
         idx1, idx2 = None, None
         for idx1, time in enumerate(self.params['continuum']['times']):
             for idx2, freq in enumerate(self.params['continuum']['freqs']):
-                run = ContinuumRun(self.dcy, time, freq,
-                                   bws[idx2] if miscf.is_iter(bws) else bws,
-                                   chanws[idx2] if miscf.is_iter(
-                                       chanws) else chanws,
-                                   t_obs[idx2] if miscf.is_iter(
-                                       t_obs) else t_obs,
-                                   t_ints[idx2] if miscf.is_iter(
-                                       t_ints) else t_ints,
-                                   tscps[idx2] if miscf.is_iter(
-                                       tscps) else tscps)
+                run = ContinuumRun(
+                    self.dcy, time, freq,
+                    bws[idx2] if miscf.is_iter(bws) else bws,
+                    chanws[idx2] if miscf.is_iter(chanws) else chanws,
+                    t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
+                    t_ints[idx2] if miscf.is_iter(t_ints) else t_ints,
+                    tscps[idx2] if miscf.is_iter(tscps) else tscps
+                )
                 # self.log.add_entry(mtype="INFO",
                 #                    entry="Run #{} -> Details:\n{}"
                 #                          "".format(len(runs) + 1,

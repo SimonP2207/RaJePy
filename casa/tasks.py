@@ -250,7 +250,6 @@ class Tclean(_CasaTask):
               'outlierfile': (str, ''),
               'weighting': (str, 'briggs'),
               'robust': (float, 0.5),
-              'noise': (str, '1.0Jy'),
               'npixels': (int, 0),
               'uvtaper': (list, []),
               'niter': (int, 1000),
