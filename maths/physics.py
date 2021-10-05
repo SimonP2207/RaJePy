@@ -397,7 +397,7 @@ def n_0_from_mlr(mlr: float, v_0: float, w_0: float, mu: float, q_nd: float,
     v_0 : float
         Central velocity at the base of the jet (km / s)
     w_0 : float
-        Full jet-width at the base of teh jet (au)
+        Full jet-width at the base of the jet (au)
     mu : float
         Average atomic mass (u)
     q_nd : float
@@ -846,14 +846,20 @@ def h_ss73(alpha, acc_rate, m_yso, radius, zone='c'):
 
 
 if __name__ == '__main__':
-    n_0_tocalc_mlr = 1.319e9
+    # def mlr_from_n_0(n_0: float, v_0: float, w_0: float, mu: float, q_nd: float,
+    #                  q_nv: float, R_1: float, R_2: float) -> float:
+    # def n_0_from_mlr(mlr: float, v_0: float, w_0: float, mu: float, q_nd: float,
+    #                  q_nv: float, R_1: float, R_2: float) -> float:
+    mlr = 1.7e-7
+    v0, w0, qnd, qvd  = 300., 5., -0.1, -0.5
+    qnd, qnv = -0.1, -0.5
+    qnd, qnv = 0, 0
+    r1, r2 = 0.25, 5.0
+    n_0 = n_0_from_mlr(mlr, v0, w0, 1.3, qnd, qnv, r1, r2)
+    calc_mlr = mlr_from_n_0(n_0, v0, w0, 1.3, qnd, qnv, r1, r2)
 
-    mlr = mlr_from_n_0(n_0_tocalc_mlr, 500., 2.5, 1.3, -.5, -.5, 0.5, 5.)
-    n_0 = n_0_from_mlr(mlr, 500., 2.5, 1.3, -.5, -.5, 0.5, 5.)
-
-    print(format(mlr, '.3e'), format(mlr, '.3e'))
-    print(format(n_0, '.3e'), format(n_0_tocalc_mlr, '.3e'))
-
+    print(format(mlr, '.3e'), format(calc_mlr, '.3e'))
+    print(format(n_0, '.3e'), format(n_0, '.3e'))
     # print('{:.0f} K'.format(temp_ss73(0.001, 1e-7, 1., 1.)))
     # print('{:.2e} cm^-3'.format(n_ss73(0.001, 1e-7, 1., 1.)))
     # print('{:.2f} au'.format(z0_ss73(0.001, 1e-7, 1., 1.)))

@@ -119,7 +119,7 @@ def check_pline_params(params):
     for band in ('continuum', 'rrls'):
         shape = np.shape(params[band]['tscps'])
         if shape != (0, ) and shape != ():
-            if shape[1] is not 2:
+            if shape[1] != 2:
                 return ValueError("np.ndarray of params's section {}'s value, "
                                   "tscps, must be of shape (n, 2)".format(band))
 
@@ -164,9 +164,9 @@ def check_model_params(params):
                            ('T_0', float),
                            ('mu', float),
                            ('mlr', float)),
-            'ejection': (('t_0', (np.ndarray, np.float)),
-                         ('hl', (np.ndarray, np.float)),
-                         ('chi', (np.ndarray, np.float)))}
+            'ejection': (('t_0', (np.ndarray, float)),
+                         ('hl', (np.ndarray, float)),
+                         ('chi', (np.ndarray, float)))}
 
     e = _param_key_check(params, keys)
     if isinstance(e, Exception):
@@ -174,9 +174,9 @@ def check_model_params(params):
 
     # Extra, model-specific checks here
     try:
-        if params['target']['epoch'] == 'J2000':
+        if params['target']['epoch'].upper() == 'J2000':
             frame = 'fk5'
-        elif params['target']['epoch'] == 'B1950':
+        elif params['target']['epoch'].upper() == 'B1950':
             frame = 'fk4'
         else:
             return ValueError("Only epochs B1950 and J2000 are supported as "
@@ -188,6 +188,7 @@ def check_model_params(params):
         return ValueError("Please check validity of sexagesimal coordinates "
                           "within ra/dec fields of target section of model "
                           "params, as well as a valid value for frame")
+
 
 def freq_str(freq: Union[Iterable, float],
              fmt: str = '.0f') -> Union[Iterable, float]:

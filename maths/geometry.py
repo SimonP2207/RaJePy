@@ -344,17 +344,114 @@ def xyz_to_rwp(x: Union[float, Iterable],
     -------
     Tuple of r, w, and phi coordinate arrays
     """
-    i = np.radians(inc)
-    t = np.radians(pa)
+    r = r_xyzti(x, y, z, inc, pa)
+    w = w_xyzti(x, y, z, inc, pa)
+    p = phi_xyzti(x, y, z, inc, pa)
+
+    return r, w, p
+
+
+def r_xyzti(x: Union[float, Iterable],
+            y: Union[float, Iterable],
+            z: Union[float, Iterable],
+            inc: float, pa: float) -> Union[float, Iterable]:
+    """
+    Converts (x, y, z) coordinate to jet-system r-coordinate(s) given a jet of
+    defined inclination and position angle.
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate
+    y : float
+        y-coordinate
+    z : float
+        z-coordinate
+    inc : float
+        Inclination of system (deg)
+    pa : float
+        Position angle of system (deg)
+
+    Returns
+    -------
+    r-coordinate(s) of given (x, y, z) coordinate
+    """
+    i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
+    t = np.radians(-pa)   # East of North in an RA/Dec. sense
     r = x * np.sin(i) * np.sin(t) + y * np.cos(i) + z * np.sin(i) * np.cos(t)
+
+    return r
+
+
+def w_xyzti(x: Union[float, Iterable],
+            y: Union[float, Iterable],
+            z: Union[float, Iterable],
+            inc: float, pa: float) -> Union[float, Iterable]:
+    """
+    Converts (x, y, z) coordinate to jet-system w-coordinate(s) given a jet of
+    defined inclination and position angle.
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate
+    y : float
+        y-coordinate
+    z : float
+        z-coordinate
+    inc : float
+        Inclination of system (deg)
+    pa : float
+        Position angle of system (deg)
+
+    Returns
+    -------
+    w-coordinate(s) of given (x, y, z) coordinate
+    """
+    i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
+    t = np.radians(-pa)   # East of North in an RA/Dec. sense
     w = np.sqrt(np.sin(i) ** 2. * (y ** 2. - x ** 2. * np.sin(t) ** 2.
                                    - x * z * np.sin(2. * t)
                                    - z ** 2. * np.cos(t) ** 2.)
                 - y * np.sin(2. * i) * (x * np.sin(t) + z * np.cos(t))
                 + x ** 2. + z ** 2.)
-    p = np.arctan2(y * np.sin(i) - z * np.cos(i),
-                   x * np.cos(t) - np.sin(t) * (y * np.cos(i) + z * np.sin(i)))
-    return r, w, p
+
+    return w
+
+
+def phi_xyzti(x: Union[float, Iterable],
+              y: Union[float, Iterable],
+              z: Union[float, Iterable],
+              inc: float, pa: float) -> Union[float, Iterable]:
+    """
+    Converts (x, y, z) coordinate to jet-system phi-coordinate(s) given a jet of
+    defined inclination and position angle.
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate
+    y : float
+        y-coordinate
+    z : float
+        z-coordinate
+    inc : float
+        Inclination of system (deg)
+    pa : float
+        Position angle of system (deg)
+
+    Returns
+    -------
+    phi-coordinate(s) of given (x, y, z) coordinate
+    """
+    i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
+    t = np.radians(-pa)   # East of North in an RA/Dec. sense
+
+    phi = np.arctan2(y * np.sin(i) - z * np.cos(i),
+                     x * np.cos(t) -
+                     np.sin(t) * (y * np.cos(i) + z * np.sin(i)))
+
+    return phi
 
 
 def w_xy(x: Union[float, Iterable], y: Union[float, Iterable], w_0: float,
