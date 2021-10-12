@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Callable, Union
+from typing import Callable, Union, Iterable
 import os
 import numpy as np
 import scipy.constants as con
@@ -14,6 +14,82 @@ from uncertainties import ufloat as uf
 # ############################################################################ #
 # ######################## Jet-model related methods below ################### #
 # ############################################################################ #
+def q_n(epsilon: float, q_v: float) -> float:
+    """
+    Power-law coefficient for number density as a function of distance along
+    jet axis, r. This calculation conserves mass along jet (see Reynolds, 1986)
+
+    Parameters
+    ----------
+    epsilon
+        Power-law coefficient for jet-width as a function of distance along
+        jet axis, r
+    q_v
+        Power-law coefficient for velocity as a function of distance along
+        jet axis, r
+
+    Returns
+    -------
+    Power-law coefficient for number-density along jet axis
+    """
+    return -q_v - (2.0 * epsilon)
+
+
+def q_tau(epsilon: float, q_x: float, q_n: float, q_T: float) -> float:
+    """
+    Power-law coefficient for optical depth as a function of distance along
+    jet axis, r (see Reynolds, 1986).
+
+    Parameters
+    ----------
+    epsilon
+        Power-law coefficient for jet-width as a function of distance along
+        jet axis, r
+    q_x
+        Power-law coefficient for ionisation fraction as a function of distance
+        along jet axis, r
+    q_n
+        Power-law coefficient for number density as a function of distance along
+        jet axis, r
+    q_T
+        Power-law coefficient for temperature as a function of distance along
+        jet axis, r
+
+    Returns
+    -------
+    Power-law coefficient for optical depth along jet axis
+    """
+
+    return epsilon + 2.0 * q_x + 2.0 * q_n - 1.35 * q_T
+
+
+def v_rot(r: Union[float, Iterable], reff: Union[float, Iterable],
+          rho: Union[float, Iterable], epsilon: float,
+          m_star: float) -> Union[float, Iterable]:
+    """
+
+    Parameters
+    ----------
+    r
+        r-coordinate, au
+    reff
+        Effective radius (see RaJePy.maths.geometry.r_eff method), au
+    rho
+        Distance of r along r-axis in units of r_0 (see
+        RaJePy.maths.geometry.mod_r_0 method)
+    epsilon
+        Power-law coefficient for jet-width as a function of distance along
+        jet axis, r
+    m_star
+        Mass of central object around which Keplerian orbits are established
+        (M_sol)
+    Returns
+    -------
+    Rotational velocity in km/s
+    """
+    return np.sqrt(con.G * m_star * cnsts.MSOL / (reff * con.au)) * rho ** -epsilon / 1e3
+
+
 def tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T,
           opang):
     """

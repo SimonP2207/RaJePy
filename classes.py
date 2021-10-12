@@ -23,7 +23,6 @@ import astropy.units as u
 import scipy.constants as con
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from shutil import get_terminal_size
 from matplotlib.colors import LogNorm
 
 from RaJePy import cnsts
@@ -164,6 +163,20 @@ class JetModel:
         self._name = self.params['target']['name']
         self._csize = self.params['grid']['c_size']
 
+        # Automatically calculated parameters
+        mr0 = mgeom.mod_r_0(self._params['geometry']['opang'],
+                            self._params['geometry']['epsilon'],
+                            self._params['geometry']['w_0'])
+        q_n = mphys.q_n(self._params["geometry"]["epsilon"],
+                        self._params["power_laws"]["q_v"])
+        q_tau = mphys.q_tau(self._params["geometry"]["epsilon"],
+                            self._params["power_laws"]["q_x"],
+                            q_n,
+                            self._params["power_laws"]["q_T"])
+        self._params["geometry"]["mod_r_0"] = mr0
+        self._params["power_laws"]["q_n"] = q_n
+        self._params["power_laws"]["q_tau"] = q_tau
+
         if log is not None:
             self._log = log
         else:
@@ -203,9 +216,6 @@ class JetModel:
         self._idxs = None   # Grid of cell indices
         self._grid = None  # grid of cell-centre positions
         self._rwp = None
-        # self._rr = None  # grid of cell-centre r-coordinates
-        # self._ww = None  # grid of cell-centre w-coordinates
-        # self._pp = None  # grid of cell-centre phi-coordinates
         self._rreff = None  # grid of cell-centre r_eff-coordinates
         self._ts = None  # grid of cell-material times since launch
         self._m = None  # grid of cell-masses
@@ -213,24 +223,8 @@ class JetModel:
         self._xi = None  # grid of cell ionisation fractions
         self._temp = None  # grid of cell temperatures
         self._v = None  # 3-tuple of cell x, y and z velocity components
-
-        # # Calculate steady state mass loss rate
-        # mlr = self.params['properties']['n_0'] * 1e6 * np.pi  # m^-3
-        # mlr *= self.params['properties']['mu'] * mphys.atomic_mass("H")  # kg/m^3
-        # mlr *= (self.params['geometry']['w_0'] * con.au) ** 2.  # kg/m
-        # mlr *= self.params['properties']['v_0'] * 1e3  # kg/s
-        # self._ss_jml = mlr  # steady state mass loss rate
-
-
-        # # Function to return jet mass loss rate at any time
-        # def func(jml):
-        #     def func2(t):
-        #         """Mass loss rate as function of time"""
-        #         return jml + t * 0.
-        #     return func2
-        # self._jml_t = func(self._ss_jml)  # JML as function of time function
-
         self._ss_jml = self.params["properties"]["mlr"] * 1.989e30 / con.year
+        
         n_0 = mphys.n_0_from_mlr(self.params["properties"]["mlr"],
                                  self.params["properties"]["v_0"],
                                  self.params["geometry"]["w_0"],
@@ -615,75 +609,90 @@ class JetModel:
         count = 0
         progress = -1
         then = time.time()
-        for idxy, yplane in enumerate(self.zz):
-            for idxx, xrow in enumerate(yplane):
-                for idxz, z in enumerate(xrow):
-                    count += 1
-                    # Does the cell definitely lie outside of the jet
-                    # boundary? Yes if w-coordinate is more than the cells'
-                    # full diagonal dimension away from the jet's width at
-                    # the cells' r-coordinate
-                    wr = mgeom.w_r(self.rr[idxy][idxx][idxz],
-                                   w_0, mod_r_0, r_0, eps)  # Removed np.abs(r) here
 
-                    if (self.ww[idxy][idxx][idxz] - 0.5 * diag) > wr:
-                        continue
+        n_verts_inside = np.zeros(np.shape(self.xx), dtype=int)
+        verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
+                 (0., 0., cs), (cs, 0., cs), (0., cs, cs), (cs, cs, cs))
 
-                    # Voxel blfc coordinate
-                    x, y = (self.xx[idxy][idxx][idxz],
-                            self.yy[idxy][idxx][idxz])
+        for dx, dy, dz in verts:
+            rv, wv = mgeom.xyz_to_rwp(self.xx + dx, self.yy + dy,
+                                      self.zz + dz, inc, pa)[:2]
+            wrv = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)
+            n_verts_inside = np.where((wrv >= wv) & (np.abs(rv) >= r_0),
+                                      n_verts_inside + 1, n_verts_inside)
+        ffs = np.where(n_verts_inside == 8, 1.0, ffs)
+        ffs = np.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
+        areas = np.where(0 < n_verts_inside, 1.0, areas)
 
-                    # Voxel's vertices' coordinates
-                    verts = np.array([(x, y, z), (x + cs, y, z),
-                                      (x, y + cs, z), (x + cs, y + cs, z),
-                                      (x, y, z + cs), (x + cs, y, z + cs),
-                                      (x, y + cs, z + cs),
-                                      (x + cs, y + cs, z + cs)])
-
-                    # Cell-vertices' r, w and phi coordinates
-                    rv, wv, pv = mgeom.xyz_to_rwp(verts[::, 0], verts[::, 1],
-                                                  verts[::, 2], inc, pa)
-                    wr = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)  # Removed np.abs(r) here
-                    verts_inside = (wv <= wr) & (np.abs(rv) >= r_0)
-
-                    if np.sum(verts_inside) == 8:
-                        ff = 1.
-                        area = 1.
-                    elif np.sum(verts_inside) == 0:
-                        continue
-                    else:
-                        # TODO: Cells at base of jet need to accommodate for
-                        #  r_0 properly. Value of 0.5 for ff and area will
-                        #  not do
-                        # Take average values for fill factor/projected areas
-                        ff = .5
-                        area = 1.0
-
-                    ffs[idxy][idxx][idxz] = ff
-                    areas[idxy][idxx][idxz] = area
-
-                # Progress bar
-                new_progress = int(count / nvoxels * 100)  #
-                if new_progress > progress:
-                    progress = new_progress
-                    pblen = get_terminal_size().columns - 1
-                    pblen -= 16  # 16 non-varying characters
-                    s = '[' + ('=' * (int(progress / 100 * pblen) - 1)) + \
-                        ('>' if int(progress / 100 * pblen) > 0 else '') + \
-                        (' ' * int(pblen - int(progress / 100 * pblen))) + '] '
-                    # s += format(int(progress), '3') + '% complete'
-                    if progress != 0.:
-                        t_sofar = (time.time() - then)
-                        try:
-                            rate = progress / t_sofar
-                            secs_left = (100. - progress) / rate
-                            s += time.strftime('%Hh%Mm%Ss left',
-                                               time.gmtime(secs_left))
-                        except ZeroDivisionError:
-                            s += '  h  m  s left'
-                    else:
-                        s += '  h  m  s left'
-                    print('\r' + s, end='' if progress < 100 else '\n')
+        # for idxy, yplane in enumerate(self.zz):
+        #     for idxx, xrow in enumerate(yplane):
+        #         for idxz, z in enumerate(xrow):
+        #             count += 1
+        #             # Does the cell definitely lie outside of the jet
+        #             # boundary? Yes if w-coordinate is more than the cells'
+        #             # full diagonal dimension away from the jet's width at
+        #             # the cells' r-coordinate
+        #             wr = mgeom.w_r(self.rr[idxy][idxx][idxz],
+        #                            w_0, mod_r_0, r_0, eps)  # Removed np.abs(r) here
+        #
+        #             if (self.ww[idxy][idxx][idxz] - 0.5 * diag) > wr:
+        #                 continue
+        #
+        #             # Voxel blfc coordinate
+        #             x, y = (self.xx[idxy][idxx][idxz],
+        #                     self.yy[idxy][idxx][idxz])
+        #
+        #             # Voxel's vertices' coordinates
+        #             verts = np.array([(x, y, z), (x + cs, y, z),
+        #                               (x, y + cs, z), (x + cs, y + cs, z),
+        #                               (x, y, z + cs), (x + cs, y, z + cs),
+        #                               (x, y + cs, z + cs),
+        #                               (x + cs, y + cs, z + cs)])
+        #
+        #             # Cell-vertices' r, w and phi coordinates
+        #             rv, wv, pv = mgeom.xyz_to_rwp(verts[::, 0], verts[::, 1],
+        #                                           verts[::, 2], inc, pa)
+        #             wr = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)  # Removed np.abs(r) here
+        #             verts_inside = (wv <= wr) & (np.abs(rv) >= r_0)
+        #
+        #             if np.sum(verts_inside) == 8:
+        #                 ff = 1.
+        #                 area = 1.
+        #             elif np.sum(verts_inside) == 0:
+        #                 continue
+        #             else:
+        #                 # TODO: Cells at base of jet need to accommodate for
+        #                 #  r_0 properly. Value of 0.5 for ff and area will
+        #                 #  not do
+        #                 # Take average values for fill factor/projected areas
+        #                 ff = .5
+        #                 area = 1.0
+        #
+        #             ffs[idxy][idxx][idxz] = ff
+        #             areas[idxy][idxx][idxz] = area
+        #
+        #         # Progress bar
+        #         new_progress = int(count / nvoxels * 100)  #
+        #         if new_progress > progress:
+        #             progress = new_progress
+        #             pblen = get_terminal_size().columns - 1
+        #             pblen -= 16  # 16 non-varying characters
+        #             s = '[' + ('=' * (int(progress / 100 * pblen) - 1)) + \
+        #                 ('>' if int(progress / 100 * pblen) > 0 else '') + \
+        #                 (' ' * int(pblen - int(progress / 100 * pblen))) + '] '
+        #             # s += format(int(progress), '3') + '% complete'
+        #             if progress != 0.:
+        #                 t_sofar = (time.time() - then)
+        #                 try:
+        #                     rate = progress / t_sofar
+        #                     secs_left = (100. - progress) / rate
+        #                     s += time.strftime('%Hh%Mm%Ss left',
+        #                                        time.gmtime(secs_left))
+        #                 except ZeroDivisionError:
+        #                     s += '  h  m  s left'
+        #             else:
+        #                 s += '  h  m  s left'
+        #             print('\r' + s, end='' if progress < 100 else '\n')
 
         now = time.time()
         if self.log:
@@ -893,6 +902,7 @@ class JetModel:
         a = np.where(a <= self.params['geometry']['r_0'],
                      self.params['geometry']['r_0'], a)
 
+        # TODO: q^d_T dependence needed here
         def indefinite_integral(z):
             num_p1 = self.params['properties']['T_0'] * \
                      self.params["geometry"]["mod_r_0"]
@@ -929,14 +939,10 @@ class JetModel:
         if self._v is not None:
             return self._v
 
-        # x = self.xx + 0.5 * self.csize
-        # y = self.yy + 0.5 * self.csize
-        # z = self.zz + 0.5 * self.csize
         r = np.abs(self.rr)
 
         r_0 = self.params['geometry']['r_0']
         mr0 = self.params['geometry']['mod_r_0']
-        m1 = self.params['target']['M_star'] * cnsts.MSOL  # kg
 
         a = r - 0.5 * self.csize
         b = r + 0.5 * self.csize
@@ -946,50 +952,41 @@ class JetModel:
 
         a = np.where(a <= r_0, r_0, a)
 
+        # TODO: q^d_v dependence needed here
         def indefinite_integral(_r):
-            num_p1 = self.params['properties']['v_0'] * \
-                     self.params["geometry"]["mod_r_0"]
-            num_p2 = ((_r + self.params["geometry"]["mod_r_0"] -
-                       self.params["geometry"]["r_0"]) /
-                      (self.params["geometry"]["mod_r_0"]))
+            num_p1 = self.params['properties']['v_0'] * mr0
+            num_p2 = (_r + mr0 - r_0) / mr0
             num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
             den = self.params["power_laws"]["q_v"] + 1.
             return num_p1 * num_p2 / den
 
         vz = indefinite_integral(b) - indefinite_integral(a)
         vz /= b - a
-        vz = np.where(self.fill_factor > 0., vz, np.NaN)
 
-        # Effective radius of (x, y) point in jet stream i.e. from what radius
-        # in the disc the material was launched
-        vr = (np.sqrt(con.G * m1) * np.sqrt(self.rreff * con.au) /
-              (self.ww * con.au) *
-              mgeom.rho(r, r_0, mr0) ** self.params['power_laws']['q_v'])
+        vz = np.where(self.fill_factor > 0., vz, np.NaN) * np.sign(self.rr)
+        vr = mphys.v_rot(self.rr, self.rreff, mgeom.rho(self.rr, r_0, mr0),
+                         self.params['geometry']['epsilon'],
+                         self.params['target']['M_star'])
 
-        # TODO: Probably should implement logic here to implement user-defined
-        #  rotation sense in the jet
-        vx = vr * np.sin(self.pp)
-        vy = vr * np.cos(self.pp)
+        # x/y components of rotational velocity
+        rotation_direction = self.params["geometry"]["rotation"].lower()
+        vx = -vr * np.sin(self.pp) * (1 if rotation_direction == 'ccw' else -1)
+        vy = vr * np.cos(self.pp) * (1 if rotation_direction == 'ccw' else -1)
 
-        vx /= 1e3  # km/s
-        vy /= 1e3  # km/s
-
-        # vx = -vx here because velocities appear flipped in checks
-        vx = -np.where(self.fill_factor > 0., vx, np.NaN)
+        vx = np.where(self.fill_factor > 0., vx, np.NaN)
         vy = np.where(self.fill_factor > 0., vy, np.NaN)
-        vz = np.where(self.rr > 0, vz, -vz)
         vz = np.where(self.fill_factor > 0., vz, np.NaN)
 
         i = np.radians(90. - self.params["geometry"]["inc"])
-        pa = np.radians(self.params["geometry"]["pa"])
+        pa = -np.radians(self.params["geometry"]["pa"])
 
         # TODO: Not sure how these will be affected with changes implemented in
         #  mgeom.xyz_to_rwp
         # Set up rotation matrices in inclination and position angle,
         # respectively
         rot_x = np.array([[1., 0., 0.],
-                          [0., np.cos(-i), -np.sin(-i)],
-                          [0., np.sin(-i), np.cos(-i)]])
+                          [0., np.cos(i), -np.sin(i)],
+                          [0., np.sin(i), np.cos(i)]])
         rot_y = np.array([[np.cos(pa), 0., np.sin(pa)],
                           [0., 1., 0.],
                           [-np.sin(pa), 0., np.cos(pa)]])
@@ -1006,7 +1003,7 @@ class JetModel:
                     vys[idxx][idxy][idxz] = y
                     vzs[idxx][idxy][idxz] = z
 
-        self._v = (vxs, vys, vzs)
+        self._v = (vxs, vys + self.params["target"]["v_lsr"], vzs)
 
         return self._v
 
@@ -1391,10 +1388,10 @@ class JetModel:
         ndims = len(np.shape(data))
         if ndims == 3:
             # TODO: Following untested for Cartesian numpy array indexing ('xy')
-            hdu = fits.PrimaryHDU(np.flip(data, axis=0).T)
+            hdu = fits.PrimaryHDU(np.swapaxes(np.swapaxes(ns, 0, 2), 0, 1))
         elif ndims == 2:
             # TODO: Following untested for Cartesian numpy array indexing ('xy')
-            hdu = fits.PrimaryHDU(data.T)
+            hdu = fits.PrimaryHDU(np.swapaxes(data, 0, 1))
         else:
             raise ValueError(f"Unexpected number of data dimensions ({ndims})")
 
@@ -3712,93 +3709,71 @@ class Pointing(object):
         return self._coord
 
 
-# class PointingScheme(object):
-#     """
-#     Class to handle the pointing scheme for synthetic observations
-#     """
-#
-#     def __init__(self):
-#         self.pointings = []
-
-
 if __name__ == '__main__':
-    # TODO: Sort out the grid! It's all over the place with regards to
-    #  transposed arrays, reverse slicing etc. Need to be consistent throughout
-    #  code!
+
+
     import matplotlib.cm
     import matplotlib.pylab as plt
 
     param_dcy = os.sep.join([os.path.dirname(__file__), 'test', 'test_cases'])
     jm = JetModel(os.sep.join([param_dcy, 'test1-model-params.py']))
+
     pl = Pipeline(jm, os.sep.join([param_dcy, 'test1-pipeline-params.py']))
+
+    # from RaJePy.plotting import functions as plotf
+    # plotf.model_plot(jm, show_plot=True)
+
     ns = jm.fill_factor
-    ns = np.where(jm.rr < 0, 10 * ns, ns)
-    sum_ns_x = np.nansum(ns, axis=0)
     sum_ns_y = np.nansum(ns, axis=1)
-    sum_ns_z = np.nansum(ns, axis=2)
-
-    plt.close('all')
-
-    current_cmap = matplotlib.cm.get_cmap()
-    current_cmap.set_bad(color='white')
-
-    fig, ax = plt.subplots(1, 3, figsize=(9, 3.), sharex=True, sharey=True)
-
-    # for a in ax:
-    #     a.set_facecolor(current_cmap(0.))
-
-    ax[0].imshow(sum_ns_x.T[::-1], cmap=current_cmap,
-                 extent=(np.nanmin(jm.yy), np.nanmax(jm.yy),
-                         np.nanmin(jm.zz), np.nanmax(jm.zz)))
-
-    ax[1].imshow(sum_ns_y.T[::-1], cmap=current_cmap,
-                 extent=(np.nanmin(jm.xx), np.nanmax(jm.xx),
-                         np.nanmin(jm.zz), np.nanmax(jm.zz)))
-
-    ax[2].imshow(sum_ns_z.T, cmap=current_cmap,
-                 extent=(np.nanmin(jm.xx), np.nanmax(jm.xx),
-                         np.nanmin(jm.yy), np.nanmax(jm.yy)))
-
-    ax[0].set_title("Sum along axis 0 (x)")
-    ax[1].set_title("Sum along axis 1 (y)")
-    ax[2].set_title("Sum along axis 2 (z)")
-
-    ax[0].set_xlabel("y [au]")
-    ax[0].set_ylabel("z [au]")
-
-    ax[1].set_xlabel("x [au]")
-    ax[1].set_ylabel("z [au]")
-
-    ax[2].set_xlabel("x [au]")
-    ax[2].set_ylabel("y [au]")
-
-    ax[0].set_xlim(np.nanmin([jm.grid]), np.nanmax([jm.grid]))
-    ax[0].set_ylim(np.nanmin([jm.grid]), np.nanmax([jm.grid]))
-
-    plt.show()
-
-    from astropy.io import fits
 
     if jm._arr_indexing == 'ij':
-        # hdu = fits.PrimaryHDU(np.nansum(ns, axis=1).T)
-        # Following command puts z-axis on RA-axis and x-axis (reversed) on Dec-axis
-        hdu = fits.PrimaryHDU(ns)
-        # Following command puts x-axis (reversed) on RA-axis and z-axis on Dec-axis
-        hdu = fits.PrimaryHDU(ns.T)
-        # Following command puts x-axis on RA-axis and z-axis (reversed) on Dec-axis
-        hdu = fits.PrimaryHDU(ns.T[::-1])
-        # Following command puts x-axis on RA-axis and z-axis on Dec-axis
-        hdu = fits.PrimaryHDU(np.flip(ns, axis=0).T)
+        # hdu = fits.PrimaryHDU(np.flip(np.swapaxes(ns, 2, 0), axis=1))
+        # Swap x-axis for z-axis and then z-axis for y-axis since
+        # NAXIS1 = numpy axis 2, NAXIS2 = numpy axis 1 and NAXIS3 = numpy axis 0
+        hdu3d = fits.PrimaryHDU(np.swapaxes(np.swapaxes(ns, 0, 2), 0, 1))
+        hdu2d = fits.PrimaryHDU(np.swapaxes(sum_ns_y, 0, 1))
+        hdu3drs = fits.PrimaryHDU(np.swapaxes(np.swapaxes(jm.rr, 0, 2), 0, 1))
+        hdu2drs = fits.PrimaryHDU(np.swapaxes(np.nansum(jm.rr, axis=1), 0, 1))
+        hdu3dphis = fits.PrimaryHDU(np.degrees(np.swapaxes(np.swapaxes(np.where(np.isnan(jm.fill_factor), np.nan, jm.pp), 0, 2), 0, 1)))
 
-        hdu = fits.PrimaryHDU(np.nansum(ns, axis=1).T)
     elif jm._arr_indexing == 'xy':
-        hdu = fits.PrimaryHDU(np.nansum(ns, axis=0).T)
-        hdu = fits.PrimaryHDU(ns)
+        # hdu = fits.PrimaryHDU(np.nansum(ns, axis=0).T)
+        hdu3d = fits.PrimaryHDU(ns)
     else:
         raise ValueError(f"Array indexing should be 'ij' or 'xy', not "
                          f"{jm._arr_indexing.__repr__()}")
-    hdul = fits.HDUList([hdu])
-    fitsfile = r'C:/Users/simon/Desktop/ns.fits'
-    if os.path.exists(fitsfile):
-        os.remove(fitsfile)
-    hdul.writeto('../Desktop/ns.fits')
+    hdul3d = fits.HDUList([hdu3d])
+    fitsfile3d = r'C:/Users/simon/Desktop/ns3d.fits'
+    if os.path.exists(fitsfile3d):
+        os.remove(fitsfile3d)
+    hdul3d.writeto(fitsfile3d)
+
+    hdul2d = fits.HDUList([hdu2d])
+    fitsfile2d = r'C:/Users/simon/Desktop/ns2d.fits'
+    if os.path.exists(fitsfile2d):
+        os.remove(fitsfile2d)
+    hdul2d.writeto(fitsfile2d)
+
+    hdul2drs = fits.HDUList([hdu2drs])
+    fitsfile2drs = r'C:/Users/simon/Desktop/rs2d.fits'
+    if os.path.exists(fitsfile2drs):
+        os.remove(fitsfile2drs)
+    hdul2drs.writeto(fitsfile2drs)
+
+    hdul3drs = fits.HDUList([hdu3drs])
+    fitsfile3drs = r'C:/Users/simon/Desktop/rs3d.fits'
+    if os.path.exists(fitsfile3drs):
+        os.remove(fitsfile3drs)
+    hdul3drs.writeto(fitsfile3drs)
+
+    hdul3dphis = fits.HDUList([hdu3dphis])
+    fitsfile3dphis = r'C:/Users/simon/Desktop/phis3d.fits'
+    if os.path.exists(fitsfile3dphis):
+        os.remove(fitsfile3dphis)
+    hdul3dphis.writeto(fitsfile3dphis)
+
+
+    print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")
+    from RaJePy.plotting import functions as plotf
+    plotf.plot_geometry(jm, savefig="C:/Users/simon/Desktop/geometry_plot.pdf", show_plot=False)
+    plotf.model_plot(jm, savefig="C:/Users/simon/Desktop/model_plot.pdf", show_plot=True)

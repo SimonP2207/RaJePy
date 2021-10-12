@@ -11,7 +11,6 @@ pipeline = RaJePy.classes.ModelRun('/full/path/to/example-pipeline-params.py')
 import os
 import numpy as np
 
-
 params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
           'dcys':      {"model_dcy": os.sep.join([os.getcwd(), 'test_output_dcy'])},
           # Continuum observations
@@ -34,4 +33,3 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
                         'bws':    np.array([1e8]),  # Hz
                         'chanws': np.array([1e5])},  # Hz
           }
-# ############################################################################ #

@@ -2,7 +2,7 @@
 """
 Module handling all mathematical functions and methods
 """
-from typing import Union, Callable
+from typing import Union
 import numpy as np
 from collections.abc import Iterable
 import scipy.constants as con
@@ -55,9 +55,9 @@ def rho(r: Union[float, Iterable], r_0: float,
     Distance of r along r-axis in units of r_0 (if mod_r_0 arg is None) or
     units of mod_r_0 after a translation of r by a factor of (mod_r_0 - r_0)
     """
-    try:
+    if mr0:
         return (np.abs(r) + mr0 - r_0) / mr0
-    except TypeError:
+    else:
         return np.abs(r) / r_0
 
 
@@ -139,43 +139,138 @@ def t_rw(r: Union[float, Iterable, np.ndarray],
                         (_w * mr0 ** eps * (r_1 - r_2)))
 
         return const * p1 * p2 * p3 * p4
+
     indef_intgrl = np.vectorize(indef_intgrl)
 
     return (indef_intgrl(np.abs(r) * con.au, w * con.au) -
             indef_intgrl(r_0, w * con.au)) / con.year
 
 
-def disc_angle(x: Union[float, Iterable],
+def xyz_to_rwp(x: Union[float, Iterable],
                y: Union[float, Iterable],
                z: Union[float, Iterable],
-               inc: float, pa: float) -> Union[float, np.ndarray]:
+               inc: float, pa: float) -> Union[float, Iterable]:
     """
-    Returns position angle (in radians) of originating point in the disc of
-    point in the jet stream, in the disc plane (counter-clockwise from east)
+    Converts (x, y, z) coordinate to jet-system coordinates (r, w, phi)
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate
+    y : float
+        y-coordinate
+    z : float
+        z-coordinate
+    inc : float
+        Inclination of system (deg)
+    pa : float
+        Position angle of system (deg)
+
+    Returns
+    -------
+    Tuple of r, w, and phi coordinate arrays
     """
-    i = np.radians(90. - inc)
-    pa = np.radians(pa)
+    xyz_derotated = xyz_derotate(x, y, z, inc - 90., pa, order='xy')
+    w, p, r = cartesian_to_cylindrical(*xyz_derotated)
 
-    # Set up rotation matrices in inclination and position angle, respectively
-    rot_x = np.array([[1., 0., 0.],
-                      [0., np.cos(i), -np.sin(i)],
-                      [0., np.sin(i), np.cos(i)]])
-    rot_y = np.array([[np.cos(-pa), 0., np.sin(-pa)],
-                      [0., 1., 0.],
-                      [-np.sin(-pa), 0., np.cos(-pa)]])
+    return r, w, p
 
-    # Reverse any inclination or rotation
-    p = rot_y.dot(rot_x.dot([x, y, z]))
 
-    return np.arctan2(p[1], p[0])
+def xyz_derotate(xr: Union[float, Iterable],
+                 yr: Union[float, Iterable],
+                 zr: Union[float, Iterable],
+                 alpha: float, beta: float,
+                 order: str = 'xy') -> Union[float, Iterable]:
+    """
+    Converts rotated (x, y, z) coordinate(s) to derotated (x, y, z)
+    coordinate(s) given a rotation of defined x-rotation and y-rotation.
+    See https://en.wikipedia.org/wiki/Rotation_matrix.
+
+    Parameters
+    ----------
+    xr
+        Rotated x-coordinate(s)
+    yr
+        Rotated y-coordinate(s)
+    zr
+        Rotated z-coordinate(s)
+    alpha
+        Rotation angle around x-axis (right-handed), deg
+    beta
+        Rotation angle around y-axis (right-handed), deg
+    order
+        Order in which to derotate. Default is 'xy' indicating derotate around
+        the x-axis first, the y-axis second. 'yx' only other legal value.
+
+    Returns
+    -------
+    Derotated (x, y, z) coordinate
+    """
+    a = np.radians(alpha)
+    b = np.radians(beta)
+
+    cos_a, sin_a = np.cos(a), np.sin(a)
+    cos_b, sin_b = np.cos(b), np.sin(b)
+
+    def x_rot(x, y, z):
+        """x-rotation matrix's dot product with (x, y, z)"""
+        return x, cos_a * y - sin_a * z, sin_a * y + cos_a * z
+
+    def y_rot(x, y, z):
+        """y-rotation matrix's dot product with (x, y, z)"""
+        return cos_b * x + sin_b * z, y, cos_b * z - sin_b * x
+
+    if order.lower() == 'xy':
+        return y_rot(*x_rot(xr, yr, zr))
+    elif order.lower() == 'yx':
+        return x_rot(*y_rot(xr, yr, zr))
+    else:
+        raise ValueError(f"Order of derotation, {order.__repr__()}, not "
+                         "recognised")
+
+
+def cartesian_to_cylindrical(x: Union[float, Iterable],
+                             y: Union[float, Iterable],
+                             z: Union[float, Iterable]) -> Union[float, Iterable]:
+    """
+    Converts NON-rotated Cartesian (x, y, z) coordinate(s) to cylindrical
+    (rho, phi, z) coordinates.
+    See https://en.wikipedia.org/wiki/Cylindrical_coordinate_system.
+
+    Parameters
+    ----------
+    x
+        x-coordinate(s)
+    y
+        y-coordinate(s)
+    z
+        z-coordinate(s)
+
+    Returns
+    -------
+    Cylindrical (rho, phi, z) coordinate(s)
+    """
+    _rho = np.sqrt(x ** 2. + y ** 2.)
+    _phi = np.arcsin(y / _rho)
+
+    if isinstance(x, Iterable):
+        _phi = np.where(x < 0, -_phi + np.pi, _phi)
+    elif isinstance(x, float) or isinstance(x, int):
+        if x < 0:
+            _phi = -_phi + np.pi
+    else:
+        raise TypeError(f"x-coordinate is of type-{type(x)}, but should be a "
+                        "float or iterable")
+
+    return _rho, _phi, z
 
 
 def r_eff(w: Union[float, np.ndarray], r_1: float, r_2: float, w_0: float,
           r: Union[float, np.ndarray], mr0: float, r_0: float,
           eps: float) -> Union[float, np.ndarray]:
     """
-    Radius at which the material at jet-coordinates (w, r) was ejected from
-    the accretion disc at
+    Radius in the accretion disc at which the material at jet-coordinates (w, r)
+    was ejected from
 
     Parameters
     ----------
@@ -203,380 +298,369 @@ def r_eff(w: Union[float, np.ndarray], r_1: float, r_2: float, w_0: float,
     """
     return r_1 + ((r_2 - r_1) * w) / w_r(r, w_0, mr0, r_0, eps)
 
-
-def y1_y2(x: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
-          r_0: float, mr0: float, inc: float) -> Union[float, Iterable]:
-    i = np.radians(inc)
-    y = (np.array([-1., 1]) *
-         np.sqrt((-2. * r_0 * w_0 ** 2. * np.cos(i) +
-                  2. * mr0 * w_0 ** 2. * np.cos(i) +
-                  mr0 ** 2. * z * np.sin(2. * i) +
-                  2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
-                 4. * (w_0 ** 2. * np.cos(i) ** 2. -
-                       mr0 ** 2. * np.sin(i) ** 2.) *
-                 (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
-                  2. * mr0 * w_0 ** 2. * z * np.sin(i) +
-                  mr0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                  w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                  r_0 ** 2. * w_0 ** 2. + mr0 ** 2. * w_0 ** 2. -
-                  2. * r_0 * mr0 * w_0 ** 2. - mr0 ** 2. * x ** 2. -
-                  mr0 ** 2. * z ** 2.)) -
-         2. * r_0 * w_0 ** 2. * np.cos(i) +
-         2. * mr0 * w_0 ** 2. * np.cos(i) +
-         mr0 ** 2. * z * np.sin(2. * i) +
-         2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) / \
-        (2. * (mr0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(i) ** 2.))
-    return y
-
-
-def y1_y2_wrapped(w_0: float, r_0: float, mr0: float, inc: float,
-                  bound: str = 'lower') -> Callable:
-    """
-    For use with scipy.integrate functions for establishing upper/lower
-    bounds in y (first integrated variable)
-
-    Parameters
-    ----------
-    w_0: float
-        Jet half-width
-    r_0: float
-        Jet ejection radius
-    mr0: float
-        Modified ejection radius
-    inc: float
-        Inclination in degrees
-    bound: str
-        Which bound in the integral to return. One of 'lower' or 'upper'
-
-    Returns
-    -------
-    Function for use within scipy's integrate methods, for the upper or
-    lower-bounds of the first integrated variable, which takes two arguments, z
-    and x.
-    """
-
-    def func(z, x):
-        i = np.radians(inc)
-        y = (np.array([-1., 1]) *
-             np.sqrt((-2. * r_0 * w_0 ** 2. * np.cos(i) +
-                      2. * mr0 * w_0 ** 2. * np.cos(i) +
-                      mr0 ** 2. * z * np.sin(2. * i) +
-                      2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
-                     4. * (w_0 ** 2. * np.cos(i) ** 2. -
-                           mr0 ** 2. * np.sin(i) ** 2.) *
-                     (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
-                      2. * mr0 * w_0 ** 2. * z * np.sin(i) +
-                      mr0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                      w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
-                      r_0 ** 2. * w_0 ** 2. + mr0 ** 2. * w_0 ** 2. -
-                      2. * r_0 * mr0 * w_0 ** 2. - mr0 ** 2. * x ** 2. -
-                      mr0 ** 2. * z ** 2.)) -
-             2. * r_0 * w_0 ** 2. * np.cos(i) +
-             2. * mr0 * w_0 ** 2. * np.cos(i) +
-             mr0 ** 2. * z * np.sin(2. * i) +
-             2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) / \
-            (2. * (mr0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(
-                i) ** 2.))
-        return y[['lower', 'upper'].index(bound)]
-
-    return func
-
-
-def w_r_wrapped(w_0: float, mr0: float, r_0: float, eps: float, inc: float,
-                bound: str = 'lower') -> Callable:
-    """
-    For use with scipy.integrate functions for establishing upper/lower
-    bounds in x (second integrated variable). Assumes position angle is 0.
-
-    Parameters
-    ----------
-    w_0: float
-        Jet half-width
-    mr0: float
-        Modified ejection radius
-    r_0: float
-        Jet ejection radius
-    eps: float
-        Power-law index for jet-width as a function of r
-    inc: float
-        Inclination in degrees
-    bound: str
-        Which bound in the integral to return. One of 'lower' or 'upper'
-
-    Returns
-    -------
-    Function for use within scipy's integrate methods, for the upper or
-    lower-bounds of the first integrated variable, which takes two arguments, z
-    and x.
-    """
-
-    def func(z: Union[float, Iterable]) -> Union[float, Iterable]:
-        # Assuming position angle is 0.
-        i = np.radians(inc)
-        r = z / np.sin(i)
-        fac = [-1, 1][['lower', 'upper'].index(bound)]
-        return w_r(r, w_0, mr0, r_0, eps) * fac
-
-    return func
-
-
-def xyz_to_rwp(x: Union[float, Iterable],
-               y: Union[float, Iterable],
-               z: Union[float, Iterable],
-               inc: float, pa: float) -> Union[float, Iterable]:
-    """
-    Converts (x, y, z) coordinate to jet-system coordinates (r, w, phi)
-
-    Parameters
-    ----------
-    x : float
-        x-coordinate
-    y : float
-        y-coordinate
-    z : float
-        z-coordinate
-    inc : float
-        Inclination of system (deg)
-    pa : float
-        Position angle of system (deg)
-
-    Returns
-    -------
-    Tuple of r, w, and phi coordinate arrays
-    """
-    r = r_xyzti(x, y, z, inc, pa)
-    w = w_xyzti(x, y, z, inc, pa)
-    p = phi_xyzti(x, y, z, inc, pa)
-
-    return r, w, p
-
-
-def r_xyzti(x: Union[float, Iterable],
-            y: Union[float, Iterable],
-            z: Union[float, Iterable],
-            inc: float, pa: float) -> Union[float, Iterable]:
-    """
-    Converts (x, y, z) coordinate to jet-system r-coordinate(s) given a jet of
-    defined inclination and position angle.
-
-    Parameters
-    ----------
-    x : float
-        x-coordinate
-    y : float
-        y-coordinate
-    z : float
-        z-coordinate
-    inc : float
-        Inclination of system (deg)
-    pa : float
-        Position angle of system (deg)
-
-    Returns
-    -------
-    r-coordinate(s) of given (x, y, z) coordinate
-    """
-    i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
-    t = np.radians(-pa)   # East of North in an RA/Dec. sense
-    r = x * np.sin(i) * np.sin(t) + y * np.cos(i) + z * np.sin(i) * np.cos(t)
-
-    return r
-
-
-def w_xyzti(x: Union[float, Iterable],
-            y: Union[float, Iterable],
-            z: Union[float, Iterable],
-            inc: float, pa: float) -> Union[float, Iterable]:
-    """
-    Converts (x, y, z) coordinate to jet-system w-coordinate(s) given a jet of
-    defined inclination and position angle.
-
-    Parameters
-    ----------
-    x : float
-        x-coordinate
-    y : float
-        y-coordinate
-    z : float
-        z-coordinate
-    inc : float
-        Inclination of system (deg)
-    pa : float
-        Position angle of system (deg)
-
-    Returns
-    -------
-    w-coordinate(s) of given (x, y, z) coordinate
-    """
-    i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
-    t = np.radians(-pa)   # East of North in an RA/Dec. sense
-    w = np.sqrt(np.sin(i) ** 2. * (y ** 2. - x ** 2. * np.sin(t) ** 2.
-                                   - x * z * np.sin(2. * t)
-                                   - z ** 2. * np.cos(t) ** 2.)
-                - y * np.sin(2. * i) * (x * np.sin(t) + z * np.cos(t))
-                + x ** 2. + z ** 2.)
-
-    return w
-
-
-def phi_xyzti(x: Union[float, Iterable],
-              y: Union[float, Iterable],
-              z: Union[float, Iterable],
-              inc: float, pa: float) -> Union[float, Iterable]:
-    """
-    Converts (x, y, z) coordinate to jet-system phi-coordinate(s) given a jet of
-    defined inclination and position angle.
-
-    Parameters
-    ----------
-    x : float
-        x-coordinate
-    y : float
-        y-coordinate
-    z : float
-        z-coordinate
-    inc : float
-        Inclination of system (deg)
-    pa : float
-        Position angle of system (deg)
-
-    Returns
-    -------
-    phi-coordinate(s) of given (x, y, z) coordinate
-    """
-    i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
-    t = np.radians(-pa)   # East of North in an RA/Dec. sense
-
-    phi = np.arctan2(y * np.sin(i) - z * np.cos(i),
-                     x * np.cos(t) -
-                     np.sin(t) * (y * np.cos(i) + z * np.sin(i)))
-
-    return phi
-
-
-def w_xy(x: Union[float, Iterable], y: Union[float, Iterable], w_0: float,
-         r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
-    """
-    Compute z-coordinate(s) of jet-boundary point given its x and y
-    coordinates.
-
-    Parameters
-    ----------
-    x : float or Iterable
-        x-coordinate(s).
-    y : float or Iterable
-        y-coordinate(s).
-    w_0 : float
-        Jet half-width at base.
-    r_0 : float
-        Jet launching radius.
-    eps : float
-        Power-law index for jet-width.
-    opang : float
-        Opening angle at base of jet
-
-    Returns
-    -------
-    float or numpy.array
-        z-coordinate(s) corresponding to supplied x/y coordinate(s) of jet
-        boundary.
-    """
-    mr0 = mod_r_0(opang, eps, w_0)
-
-    z = mr0 * ((x ** 2. + y ** 2.) ** .5 / w_0) ** (1. / eps)
-    z -= mr0
-    z += r_0
-
-    return np.where(z > r_0, z, r_0)
-
-
-def w_xz(x: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
-         r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
-    """
-    Compute y-coordinate(s) of jet-boundary point given its x and z
-    coordinates.
-
-    Parameters
-    ----------
-    x : float or Iterable
-        x-coordinate(s).
-    z : float or Iterable
-        z-coordinate(s).
-    w_0 : float
-        Jet half-width at base.
-    r_0 : float
-        Jet launching radius.
-    eps : float
-        Power-law index for jet-width.
-    opang : float
-        Opening angle at base of jet
-
-    Returns
-    -------
-    float or numpy.array
-        y-coordinate(s) corresponding to supplied x/z coordinate(s) of jet
-        boundary.
-    """
-    y = (w_r(z, w_0, mod_r_0(opang, eps, w_0), r_0, eps) ** 2. - x ** 2.)
-    y = np.abs(y) ** 0.5 * np.sign(y)
-
-    return np.where(z >= r_0, y, 0.)
-
-
-def w_yz(y: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
-         r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
-    """
-    Compute x-coordinate(s) of jet-boundary point given its y and z
-    coordinates.
-
-    Parameters
-    ----------
-    y : float or Iterable
-        y-coordinate(s).
-    z : float or Iterable
-        z-coordinate(s).
-    w_0 : float
-        Jet half-width at base.
-    r_0 : float
-        Jet launching radius.
-    eps : float
-        Power-law index for jet-width.
-    opang : float
-        Opening angle at base of jet
-
-    Returns
-    -------
-    float or numpy.array
-        x-coordinate(s) corresponding to supplied y/z coordinate(s) of jet
-        boundary.
-    """
-    x = (w_r(z, w_0, mod_r_0(opang, eps, w_0), r_0, eps) ** 2. - y ** 2.)
-    x = np.abs(x) ** 0.5 * np.sign(x)
-
-    return np.where(z >= r_0, x, 0.)
-
-
-if __name__ == "__main__":
-    prms = {'geometry': {}, 'power_laws': {}, 'target': {}, 'properties': {}}
-    prms['geometry']['w_0'] = 1.0
-    prms['geometry']['r_0'] = 1.0
-    prms["properties"]["v_0"] = 500.
-    prms['geometry']['mod_r_0'] = 4.451
-    prms['geometry']['epsilon'] = 1.
-    prms["target"]["R_1"] = 0.5
-    prms["target"]["R_2"] = 5.0
-    prms["power_laws"]["q_v"] = -0.6
-    prms["power_laws"]["q^d_v"] = -0.2
-
-    rs = np.array([834., 49.23415, 49.23415])
-    ws = np.array([0.0000, 0.0001, 0.000])
-    print(t_rw(rs, ws, prms))
-    print((rs - prms['geometry']['r_0']) * con.au /
-          (prms["properties"]["v_0"] * 1e3) / con.year)
-
-    q = 1. - prms["power_laws"]["q_v"]
-    print(((prms['geometry']['mod_r_0'] * con.au) ** prms["power_laws"]["q_v"] /
-           (prms["properties"]["v_0"] * 1e3 * q))
-          * (((rs + prms['geometry']['mod_r_0'] -
-               prms['geometry']['r_0']) * con.au) ** q -
-             (prms['geometry']['mod_r_0'] * con.au) ** q) / con.year)
+# def disc_angle(x: Union[float, Iterable],
+#                y: Union[float, Iterable],
+#                z: Union[float, Iterable],
+#                inc: float, pa: float) -> Union[float, np.ndarray]:
+#     """
+#     Returns position angle (in radians) of originating point in the disc of
+#     point in the jet stream, in the disc plane (counter-clockwise from east)
+#     """
+#     i = np.radians(90. - inc)
+#     pa = np.radians(pa)
+#
+#     # Set up rotation matrices in inclination and position angle, respectively
+#     rot_x = np.array([[1., 0., 0.],
+#                       [0., np.cos(i), -np.sin(i)],
+#                       [0., np.sin(i), np.cos(i)]])
+#     rot_y = np.array([[np.cos(-pa), 0., np.sin(-pa)],
+#                       [0., 1., 0.],
+#                       [-np.sin(-pa), 0., np.cos(-pa)]])
+#
+#     # Reverse any inclination or rotation
+#     p = rot_y.dot(rot_x.dot([x, y, z]))
+#
+#     return np.arctan2(p[1], p[0])
+#
+#
+#
+# def y1_y2(x: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
+#           r_0: float, mr0: float, inc: float) -> Union[float, Iterable]:
+#     i = np.radians(inc)
+#     y = (np.array([-1., 1]) *
+#          np.sqrt((-2. * r_0 * w_0 ** 2. * np.cos(i) +
+#                   2. * mr0 * w_0 ** 2. * np.cos(i) +
+#                   mr0 ** 2. * z * np.sin(2. * i) +
+#                   2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
+#                  4. * (w_0 ** 2. * np.cos(i) ** 2. -
+#                        mr0 ** 2. * np.sin(i) ** 2.) *
+#                  (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
+#                   2. * mr0 * w_0 ** 2. * z * np.sin(i) +
+#                   mr0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+#                   w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+#                   r_0 ** 2. * w_0 ** 2. + mr0 ** 2. * w_0 ** 2. -
+#                   2. * r_0 * mr0 * w_0 ** 2. - mr0 ** 2. * x ** 2. -
+#                   mr0 ** 2. * z ** 2.)) -
+#          2. * r_0 * w_0 ** 2. * np.cos(i) +
+#          2. * mr0 * w_0 ** 2. * np.cos(i) +
+#          mr0 ** 2. * z * np.sin(2. * i) +
+#          2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) / \
+#         (2. * (mr0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(i) ** 2.))
+#     return y
+#
+#
+# def y1_y2_wrapped(w_0: float, r_0: float, mr0: float, inc: float,
+#                   bound: str = 'lower') -> Callable:
+#     """
+#     For use with scipy.integrate functions for establishing upper/lower
+#     bounds in y (first integrated variable)
+#
+#     Parameters
+#     ----------
+#     w_0: float
+#         Jet half-width
+#     r_0: float
+#         Jet ejection radius
+#     mr0: float
+#         Modified ejection radius
+#     inc: float
+#         Inclination in degrees
+#     bound: str
+#         Which bound in the integral to return. One of 'lower' or 'upper'
+#
+#     Returns
+#     -------
+#     Function for use within scipy's integrate methods, for the upper or
+#     lower-bounds of the first integrated variable, which takes two arguments, z
+#     and x.
+#     """
+#
+#     def func(z, x):
+#         i = np.radians(inc)
+#         y = (np.array([-1., 1]) *
+#              np.sqrt((-2. * r_0 * w_0 ** 2. * np.cos(i) +
+#                       2. * mr0 * w_0 ** 2. * np.cos(i) +
+#                       mr0 ** 2. * z * np.sin(2. * i) +
+#                       2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) ** 2. -
+#                      4. * (w_0 ** 2. * np.cos(i) ** 2. -
+#                            mr0 ** 2. * np.sin(i) ** 2.) *
+#                      (-2. * r_0 * w_0 ** 2. * z * np.sin(i) +
+#                       2. * mr0 * w_0 ** 2. * z * np.sin(i) +
+#                       mr0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+#                       w_0 ** 2. * z ** 2. * np.sin(i) ** 2. +
+#                       r_0 ** 2. * w_0 ** 2. + mr0 ** 2. * w_0 ** 2. -
+#                       2. * r_0 * mr0 * w_0 ** 2. - mr0 ** 2. * x ** 2. -
+#                       mr0 ** 2. * z ** 2.)) -
+#              2. * r_0 * w_0 ** 2. * np.cos(i) +
+#              2. * mr0 * w_0 ** 2. * np.cos(i) +
+#              mr0 ** 2. * z * np.sin(2. * i) +
+#              2. * w_0 ** 2. * z * np.sin(i) * np.cos(i)) / \
+#             (2. * (mr0 ** 2. * np.sin(i) ** 2. - w_0 ** 2. * np.cos(
+#                 i) ** 2.))
+#         return y[['lower', 'upper'].index(bound)]
+#
+#     return func
+#
+#
+# def w_r_wrapped(w_0: float, mr0: float, r_0: float, eps: float, inc: float,
+#                 bound: str = 'lower') -> Callable:
+#     """
+#     For use with scipy.integrate functions for establishing upper/lower
+#     bounds in x (second integrated variable). Assumes position angle is 0.
+#
+#     Parameters
+#     ----------
+#     w_0: float
+#         Jet half-width
+#     mr0: float
+#         Modified ejection radius
+#     r_0: float
+#         Jet ejection radius
+#     eps: float
+#         Power-law index for jet-width as a function of r
+#     inc: float
+#         Inclination in degrees
+#     bound: str
+#         Which bound in the integral to return. One of 'lower' or 'upper'
+#
+#     Returns
+#     -------
+#     Function for use within scipy's integrate methods, for the upper or
+#     lower-bounds of the first integrated variable, which takes two arguments, z
+#     and x.
+#     """
+#
+#     def func(z: Union[float, Iterable]) -> Union[float, Iterable]:
+#         # Assuming position angle is 0.
+#         i = np.radians(inc)
+#         r = z / np.sin(i)
+#         fac = [-1, 1][['lower', 'upper'].index(bound)]
+#         return w_r(r, w_0, mr0, r_0, eps) * fac
+#
+#     return func
+#
+#
+# def w_xy(x: Union[float, Iterable], y: Union[float, Iterable], w_0: float,
+#          r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
+#     """
+#     Compute z-coordinate(s) of jet-boundary point given its x and y
+#     coordinates.
+#
+#     Parameters
+#     ----------
+#     x : float or Iterable
+#         x-coordinate(s).
+#     y : float or Iterable
+#         y-coordinate(s).
+#     w_0 : float
+#         Jet half-width at base.
+#     r_0 : float
+#         Jet launching radius.
+#     eps : float
+#         Power-law index for jet-width.
+#     opang : float
+#         Opening angle at base of jet
+#
+#     Returns
+#     -------
+#     float or numpy.array
+#         z-coordinate(s) corresponding to supplied x/y coordinate(s) of jet
+#         boundary.
+#     """
+#     mr0 = mod_r_0(opang, eps, w_0)
+#
+#     z = mr0 * ((x ** 2. + y ** 2.) ** .5 / w_0) ** (1. / eps)
+#     z -= mr0
+#     z += r_0
+#
+#     return np.where(z > r_0, z, r_0)
+#
+#
+# def w_xz(x: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
+#          r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
+#     """
+#     Compute y-coordinate(s) of jet-boundary point given its x and z
+#     coordinates.
+#
+#     Parameters
+#     ----------
+#     x : float or Iterable
+#         x-coordinate(s).
+#     z : float or Iterable
+#         z-coordinate(s).
+#     w_0 : float
+#         Jet half-width at base.
+#     r_0 : float
+#         Jet launching radius.
+#     eps : float
+#         Power-law index for jet-width.
+#     opang : float
+#         Opening angle at base of jet
+#
+#     Returns
+#     -------
+#     float or numpy.array
+#         y-coordinate(s) corresponding to supplied x/z coordinate(s) of jet
+#         boundary.
+#     """
+#     y = (w_r(z, w_0, mod_r_0(opang, eps, w_0), r_0, eps) ** 2. - x ** 2.)
+#     y = np.abs(y) ** 0.5 * np.sign(y)
+#
+#     return np.where(z >= r_0, y, 0.)
+#
+#
+# def w_yz(y: Union[float, Iterable], z: Union[float, Iterable], w_0: float,
+#          r_0: float, eps: float, opang: float) -> Union[float, Iterable]:
+#     """
+#     Compute x-coordinate(s) of jet-boundary point given its y and z
+#     coordinates.
+#
+#     Parameters
+#     ----------
+#     y : float or Iterable
+#         y-coordinate(s).
+#     z : float or Iterable
+#         z-coordinate(s).
+#     w_0 : float
+#         Jet half-width at base.
+#     r_0 : float
+#         Jet launching radius.
+#     eps : float
+#         Power-law index for jet-width.
+#     opang : float
+#         Opening angle at base of jet
+#
+#     Returns
+#     -------
+#     float or numpy.array
+#         x-coordinate(s) corresponding to supplied y/z coordinate(s) of jet
+#         boundary.
+#     """
+#     x = (w_r(z, w_0, mod_r_0(opang, eps, w_0), r_0, eps) ** 2. - y ** 2.)
+#     x = np.abs(x) ** 0.5 * np.sign(x)
+#
+#     return np.where(z >= r_0, x, 0.)
+#
+#
+# # Deprecated functions below
+# def r_xyzti(x: Union[float, Iterable],
+#             y: Union[float, Iterable],
+#             z: Union[float, Iterable],
+#             inc: float, pa: float) -> Union[float, Iterable]:
+#     """
+#     Converts (x, y, z) coordinate to jet-system r-coordinate(s) given a jet of
+#     defined inclination and position angle.
+#
+#     Parameters
+#     ----------
+#     x : float
+#         x-coordinate
+#     y : float
+#         y-coordinate
+#     z : float
+#         z-coordinate
+#     inc : float
+#         Inclination of system (deg)
+#     pa : float
+#         Position angle of system (deg)
+#
+#     Returns
+#     -------
+#     r-coordinate(s) of given (x, y, z) coordinate
+#     """
+#     i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
+#     t = np.radians(-pa)   # East of North in an RA/Dec. sense
+#     r = x * np.sin(i) * np.sin(t) + y * np.cos(i) + z * np.sin(i) * np.cos(t)
+#     # r = np.cos(t) * (y * np.cos(i) + z * np.sin(i)) - x * np.sin(t)  # Comes from rotating by rot_x, then rot_y
+#     # r = y * np.cos(i) + np.sin(i) * (z * np.cos(t) - x * np.sin(t))  # Comes from derotating by rot_y, then rot_x
+#
+#     return r
+#
+#
+# def w_xyzti(x: Union[float, Iterable],
+#             y: Union[float, Iterable],
+#             z: Union[float, Iterable],
+#             inc: float, pa: float) -> Union[float, Iterable]:
+#     """
+#     Converts (x, y, z) coordinate to jet-system w-coordinate(s) given a jet of
+#     defined inclination and position angle.
+#
+#     Parameters
+#     ----------
+#     x : float
+#         x-coordinate
+#     y : float
+#         y-coordinate
+#     z : float
+#         z-coordinate
+#     inc : float
+#         Inclination of system (deg)
+#     pa : float
+#         Position angle of system (deg)
+#
+#     Returns
+#     -------
+#     w-coordinate(s) of given (x, y, z) coordinate
+#     """
+#     i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
+#     t = np.radians(-pa)   # East of North in an RA/Dec. sense
+#     w = np.sqrt(np.sin(i) ** 2. * (y ** 2. - x ** 2. * np.sin(t) ** 2.
+#                                    - x * z * np.sin(2. * t)
+#                                    - z ** 2. * np.cos(t) ** 2.)
+#                 - y * np.sin(2. * i) * (x * np.sin(t) + z * np.cos(t))
+#                 + x ** 2. + z ** 2.)
+#     # cos_t, sin_t = np.cos(t), np.cos(t)
+#     # cos_i, sin_i = np.cos(i), np.sin(i)
+#     # w = np.sqrt((x * cos_t + sin_t * (y * cos_i + z * sin_i)) ** 2. +
+#     #             (y * sin_i - z * cos_i) ** 2.)
+#     # w = np.sqrt((x * cos_t + z * sin_t) ** 2. +
+#     #             (y * sin_i - cos_i * (z * cos_t - x * sin_t)) ** 2.)
+#
+#     return w
+#
+#
+# def phi_xyzti(x: Union[float, Iterable],
+#               y: Union[float, Iterable],
+#               z: Union[float, Iterable],
+#               inc: float, pa: float) -> Union[float, Iterable]:
+#     """
+#     Converts (x, y, z) coordinate to jet-system phi-coordinate(s) given a jet of
+#     defined inclination and position angle.
+#
+#     Parameters
+#     ----------
+#     x : float
+#         x-coordinate(s)
+#     y : float
+#         y-coordinate(s)
+#     z : float
+#         z-coordinate(s)
+#     inc : float
+#         Inclination of system (deg)
+#     pa : float
+#         Position angle of system (deg)
+#
+#     Returns
+#     -------
+#     phi-coordinate(s) of given (x, y, z) coordinate
+#     """
+#     i = np.radians(-inc)  # Blue jet is subsequently inclined towards us
+#     t = np.radians(-pa)   # East of North in an RA/Dec. sense
+#
+#     xr = x * np.cos(t) - np.sin(t) * (y * np.cos(i) + z * np.sin(i))
+#     phi = np.arctan2(y * np.sin(i) - z * np.cos(i), xr)
+#
+#     # w = w_xyzti(x, y, z, inc, pa)
+#     # phi = np.arcsin((y * np.sin(i) - z * np.cos(i)) / w)
+#     # phi = np.arcsin((y * np.sin(i) - np.cos(i) * (z * np.cos(t) - x * np.sin(t))) / w)
+#
+#     if isinstance(x, Iterable):
+#         phi = np.where(xr < 0, -phi + np.pi, phi)
+#     elif isinstance(xr, float) or isinstance(xr, int):
+#         if xr < 0:
+#             phi = -phi + np.pi
+#     else:
+#         raise TypeError(f"x-coordinate is of type-{type(x)}, but should be a "
+#                         "float or iterable")
+#
+#     return phi

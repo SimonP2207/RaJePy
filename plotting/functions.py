@@ -5,7 +5,7 @@ import scipy.constants as con
 import matplotlib.axes
 import matplotlib.pylab as plt
 import matplotlib.gridspec as gridspec
-from matplotlib.colors import LogNorm, SymLogNorm
+from matplotlib.colors import LogNorm, SymLogNorm, Normalize
 from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 import astropy.units as u
@@ -199,6 +199,9 @@ def plot_mass_volume_slices(jm: 'JetModel', show_plot: bool = False,
     -------
     None
     """
+    from RaJePy import cnsts
+    from RaJePy.maths import physics as mphys
+    from RaJePy import _config as cfg
 
     def m_slice(_a, _b):
         """
@@ -472,6 +475,8 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
     None
 
     """
+    from RaJePy import _config as cfg
+
     plt.close('all')
 
     fig = plt.figure(figsize=([cfg.plots["dims"]["column"] * 2.] * 2))
@@ -512,37 +517,40 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
                                                width_ratios=[9, 1],
                                                wspace=0.0, hspace=0.0)
 
-    # Velocity z-component
+    # Velocity los-component
     br_ax = plt.subplot(br_cell[0, 0])
     br_cax = plt.subplot(br_cell[0, 1])
+
+    axes = tl_ax, tr_ax, bl_ax, br_ax
+    caxes = tl_cax, tr_cax, bl_cax, br_cax
 
     bbox = tl_ax.get_window_extent()
     bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
     aspect = bbox.width / bbox.height
+    im_extent = (np.min(jm.xx), np.max(jm.xx) + jm.csize * 1.,
+                 np.min(jm.zz), np.max(jm.zz) + jm.csize * 1.)
 
-    im_nd = tl_ax.imshow(jm.number_density[:, jm.ny // 2, :].T,
+    # Number densities in top-left plot
+    ns = np.nanmean(jm.number_density, axis=jm.los_axis)
+    im_nd = tl_ax.imshow(np.swapaxes(ns, 0, 1),
                          norm=LogNorm(vmin=np.nanmin(jm.number_density),
                                       vmax=np.nanmax(jm.number_density)),
-                         extent=(np.min(jm.grid[0]),
-                                 np.max(jm.grid[0]) + jm.csize * 1.,
-                                 np.min(jm.grid[2]),
-                                 np.max(jm.grid[2]) + jm.csize * 1.),
-                         cmap='viridis_r', aspect="equal")
+                         extent=im_extent,
+                         cmap='viridis_r', aspect="equal", origin="lower")
     tl_ax.set_xlim(np.array(tl_ax.get_ylim()) * aspect)
     make_colorbar(tl_cax, np.nanmax(jm.number_density),
                   cmin=np.nanmin(jm.number_density),
                   position='right', orientation='vertical',
                   numlevels=50, colmap='viridis_r', norm=im_nd.norm)
 
-    im_T = tr_ax.imshow(jm.temperature[:, jm.ny // 2, :].T,
+    # Temperatures in top-right plot
+    temps = np.nanmean(jm.temperature, axis=jm.los_axis)
+    im_T = tr_ax.imshow(np.swapaxes(temps, 0, 1),
                         norm=LogNorm(vmin=100.,
                                      vmax=max([1e4, np.nanmax(
                                          jm.temperature)])),
-                        extent=(np.min(jm.grid[0]),
-                                np.max(jm.grid[0]) + jm.csize * 1.,
-                                np.min(jm.grid[2]),
-                                np.max(jm.grid[2]) + jm.csize * 1.),
-                        cmap='plasma', aspect="equal")
+                        extent=im_extent,
+                        cmap='plasma', aspect="equal", origin="lower")
     tr_ax.set_xlim(np.array(tr_ax.get_ylim()) * aspect)
     make_colorbar(tr_cax, max([1e4, np.nanmax(jm.temperature)]),
                   cmin=100., position='right',
@@ -550,70 +558,76 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
                   colmap='plasma', norm=im_T.norm)
     tr_cax.set_ylim(100., 1e4)
 
-    im_xi = bl_ax.imshow(jm.ion_fraction[:, jm.ny // 2, :].T * 100.,
+    # Ionisation fractions in bottom-left plot
+    xis = np.nanmean(jm.ion_fraction, axis=jm.los_axis) * 100.
+    im_xi = bl_ax.imshow(np.swapaxes(xis, 0, 1),
                          vmin=0., vmax=100.0,
-                         extent=(np.min(jm.grid[0]),
-                                 np.max(jm.grid[0]) + jm.csize * 1.,
-                                 np.min(jm.grid[2]),
-                                 np.max(jm.grid[2]) + jm.csize * 1.),
-                         cmap='gnuplot', aspect="equal")
+                         extent=im_extent,
+                         cmap='gnuplot', aspect="equal", origin="lower")
     bl_ax.set_xlim(np.array(bl_ax.get_ylim()) * aspect)
     make_colorbar(bl_cax, 100., cmin=0., position='right',
                   orientation='vertical', numlevels=50,
                   colmap='gnuplot', norm=im_xi.norm)
     bl_cax.set_yticks(np.linspace(0., 100., 6))
 
-    im_vs = br_ax.imshow(jm.vel[1][:, jm.ny // 2, :].T,
-                         vmin=np.nanmin(jm.vel[1]),
-                         vmax=np.nanmax(jm.vel[1]),
-                         extent=(np.min(jm.grid[0]),
-                                 np.max(jm.grid[0]) + jm.csize * 1.,
-                                 np.min(jm.grid[2]),
-                                 np.max(jm.grid[2]) + jm.csize * 1.),
-                         cmap='coolwarm', aspect="equal")
+    # Line-of-sight velocities (corrected for V_lsr) in bottom-right plot
+    vels_los = np.nanmean(jm.vel[1] - jm.params["target"]["v_lsr"],
+                          axis=jm.los_axis)
+    im_vs = br_ax.imshow(np.swapaxes(vels_los, 0, 1),
+                         vmin=np.nanmin(jm.vel[0]),
+                         vmax=np.nanmax(jm.vel[0]),
+                         extent=im_extent,
+                         cmap='coolwarm', aspect="equal", origin="lower")
     br_ax.set_xlim(np.array(br_ax.get_ylim()) * aspect)
-    make_colorbar(br_cax, np.nanmax(jm.vel[1]),
-                  cmin=np.nanmin(jm.vel[1]), position='right',
+    make_colorbar(br_cax, np.nanmax(jm.vel[0]),
+                  cmin=np.nanmin(jm.vel[0]), position='right',
                   orientation='vertical', numlevels=50,
                   colmap='coolwarm', norm=im_vs.norm)
 
-    dx = int((np.ptp(br_ax.get_xlim()) / jm.csize) // 2 * 2 // 20)
-    dz = jm.nz // 10
-    vzs = jm.vel[2][::dx, jm.ny // 2, ::dz].flatten()
-    xs = jm.grid[0][::dx, jm.ny // 2, ::dz].flatten()[~np.isnan(vzs)]
-    zs = jm.grid[2][::dx, jm.ny // 2, ::dz].flatten()[~np.isnan(vzs)]
-    vzs = vzs[~np.isnan(vzs)]
-    cs = br_ax.transAxes.transform((0.15, 0.5))
-    cs = br_ax.transData.inverted().transform(cs)
-
-    # TODO: Find less hacky way to deal with this
-    # This throws an error when the model is inclined so much that a slice
-    # through the middle results in an empty array when NaNs are removed,
-    # therefore skip rest of plotting code for br_ax if so
-    try:
-        v_scale = np.ceil(np.max(vzs) /
-                          10 ** np.floor(np.log10(np.max(vzs))))
-        v_scale *= 10 ** np.floor(np.log10(np.max(vzs)))
-
-        # Max arrow length is 0.1 * the height of the subplot
-        scale = v_scale * 0.1 ** -1.
-        br_ax.quiver(xs, zs, np.zeros((len(xs),)), vzs,
-                     color='w', scale=scale,
-                     scale_units='height')
-
-        br_ax.quiver(cs[0], cs[1], [0.], [v_scale], color='k', scale=scale,
-                     scale_units='height', pivot='tail')
-
-        br_ax.annotate(r'$' + format(v_scale, '.0f') + '$\n$' +
-                       r'\rm{km/s}$', cs, xytext=(0., -5.),  # half fontsize
-                       xycoords='data', textcoords='offset points',
-                       va='top',
-                       ha='center', multialignment='center', fontsize=10)
-    except ValueError:
-        pass
-
-    axes = [tl_ax, tr_ax, bl_ax, br_ax]
-    caxes = [tl_cax, tr_cax, bl_cax, br_cax]
+    # dx = int((np.ptp(br_ax.get_xlim()) / jm.csize) // 2 * 2 // 20)
+    # dz = jm.nz // 10
+    #
+    # vxs = jm.vel[0][::dx, jm.ny // 2, ::dz]
+    # vxs = np.flip(np.swapaxes(vxs, 0, 1), axis=0)
+    #
+    # vzs = jm.vel[2][::dx, jm.ny // 2, ::dz]
+    # vzs = np.flip(np.swapaxes(vzs, 0, 1), axis=0)
+    #
+    # xs = jm.xx[::dx, jm.ny // 2, ::dz]
+    # xs = np.flip(np.swapaxes(xs, 0, 1), axis=0)#[~np.isnan(vzs)]
+    #
+    # zs = jm.zz[::dx, jm.ny // 2, ::dz]
+    # zs = np.flip(np.swapaxes(zs, 0, 1), axis=0)#[~np.isnan(vzs)]
+    #
+    # vxs = vxs[~np.isnan(vxs)]
+    # vzs = vzs[~np.isnan(vzs)]
+    #
+    # max_vs_pos = np.nanmax(np.sqrt(vxs ** 2. + vzs ** 2.))
+    #
+    # cs = br_ax.transAxes.transform((0.15, 0.5))
+    # cs = br_ax.transData.inverted().transform(cs)
+    #
+    # # TODO: This is broken. vzs are inverted in this plotting routine. They are ok in the model though...
+    # try:
+    #     v_scale = np.ceil(max_vs_pos / 10 ** np.floor(np.log10(max_vs_pos)))
+    #     v_scale *= 10 ** np.floor(np.log10(max_vs_pos))
+    #
+    #     # Max arrow length is 0.1 * the height of the subplot
+    #     scale = v_scale * 0.1 ** -1.
+    #     br_ax.quiver(xs.flatten(), zs.flatten(), vxs.flatten(), vzs.flatten(),
+    #                  color='w', scale=scale,
+    #                  scale_units='height')
+    #
+    #     br_ax.quiver(cs[0], cs[1], [0.], [v_scale], color='k', scale=scale,
+    #                  scale_units='height', pivot='tail')
+    #
+    #     br_ax.annotate(r'$' + format(v_scale, '.0f') + '$\n$' +
+    #                    r'\rm{km/s}$', cs, xytext=(0., -5.),  # half fontsize
+    #                    xycoords='data', textcoords='offset points',
+    #                    va='top',
+    #                    ha='center', multialignment='center', fontsize=10)
+    # except ValueError:
+    #     pass
 
     tl_ax.text(0.9, 0.9, r'a', ha='center', va='center',
                transform=tl_ax.transAxes)
@@ -834,7 +848,8 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
 
 
 def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
-                     show_plot: bool = False, savefig: bool = False):
+                     show_plot: bool = False,
+                     savefig: Union[bool, str] = False):
     """
     Plot ejection profile using matlplotlib5
 
@@ -856,6 +871,9 @@ def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
     -------
     None
     """
+    from RaJePy import cnsts
+    from RaJePy import _config as cfg
+
     # Plot out to 5 half-lives away from last existing burst in profile
     t_0s = [jm.ejections[_]['t_0'] for _ in jm.ejections]
     hls = [jm.ejections[_]['half_life'] for _ in jm.ejections]
@@ -892,3 +910,135 @@ def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
 
     # return ax, times, jmls
     return None
+
+
+def plot_geometry(jm: 'JetModel', show_plot: bool = False,
+                  savefig: Union[bool, str] = False):
+    """
+    Plot ejection profile using matlplotlib5
+
+    Parameters
+    ----------
+    jm
+        JetModel instance from which to plot mass/volume slices.
+    show_plot
+        Whether to show the plot on the display device. Useful for interactive
+        console sessions, False by default
+    savefig
+        Whether to save the figure, False by default. Provide the full path of
+        the save file as a str to save.
+
+    Returns
+    -------
+    None
+    """
+    from RaJePy import _config as cfg
+
+    data = jm.fill_factor
+
+    sum_data_x = np.nansum(data, axis=[_ for _ in (0, 1) if _ != jm.los_axis][0])
+    sum_data_y = np.nansum(data, axis=jm.los_axis)
+    sum_data_z = np.nansum(data, axis=2)
+
+    plt.close('all')
+
+    cmap = matplotlib.cm.get_cmap("inferno").copy()
+
+    fig, ax = plt.subplots(1, 3, sharex=True, sharey=True,
+                           figsize=(cfg.plots["dims"]["text"],
+                                    cfg.plots["dims"]["text"] * 0.34))
+
+    plt.subplots_adjust(wspace=0.)
+
+    for a in ax:
+        a.set_facecolor(cmap(0.))
+        a.plot(0, 0, marker='o', mec=None, mfc='w', ms=2, mew=0)
+
+    ax[0].imshow(np.swapaxes(sum_data_x, 0, 1),
+                 cmap=cmap,
+                 extent=(np.nanmin(jm.yy), np.nanmax(jm.yy),
+                         np.nanmin(jm.zz), np.nanmax(jm.zz)),
+                 origin='lower')
+
+    ax[1].imshow(np.swapaxes(sum_data_y, 0, 1),
+                 cmap=cmap,
+                 extent=(np.nanmin(jm.xx), np.nanmax(jm.xx),
+                         np.nanmin(jm.zz), np.nanmax(jm.zz)),
+                 origin='lower')
+
+    ax[2].imshow(np.swapaxes(sum_data_z, 0, 1),
+                 cmap=cmap,
+                 extent=(np.nanmin(jm.xx), np.nanmax(jm.xx),
+                         np.nanmin(jm.yy), np.nanmax(jm.yy)),
+                 origin='lower')
+
+    grid_lines = 'w:'
+    ax[0].plot([np.nanmin(jm.yy), np.nanmax(jm.yy),
+                np.nanmax(jm.yy), np.nanmin(jm.yy), np.nanmin(jm.yy)],
+               [np.nanmin(jm.zz), np.nanmin(jm.zz),
+                np.nanmax(jm.zz), np.nanmax(jm.zz), np.nanmin(jm.zz)],
+               grid_lines)
+    ax[1].plot([np.nanmin(jm.xx), np.nanmax(jm.xx),
+                np.nanmax(jm.xx), np.nanmin(jm.xx), np.nanmin(jm.xx)],
+               [np.nanmin(jm.zz), np.nanmin(jm.zz),
+                np.nanmax(jm.zz), np.nanmax(jm.zz), np.nanmin(jm.zz)],
+               grid_lines)
+    ax[2].plot([np.nanmin(jm.xx), np.nanmax(jm.xx),
+                np.nanmax(jm.xx), np.nanmin(jm.xx), np.nanmin(jm.xx)],
+               [np.nanmin(jm.yy), np.nanmin(jm.yy),
+                np.nanmax(jm.yy), np.nanmax(jm.yy), np.nanmin(jm.yy)],
+               grid_lines)
+
+    def ann_axes(ax, pos, length=0.1, xlab=r'$x$', ylab=r'$y$', zlab=r'$z$',
+                 color='w'):
+        offsets = ((1., 0.), (0., 1.), (np.cos(np.pi / 6.), np.sin(np.pi / 6.)))
+        for i, (dx, dy) in enumerate(offsets):
+            ax.arrow(*pos, dx * length, dy * length, length_includes_head=True,
+                     transform=ax.transAxes, color=color, overhang=0.2, lw=1,
+                     head_width=0.02)
+            ax.annotate((xlab, ylab, zlab)[i],
+                        xy=pos, xytext=(pos[0] + dx * length, pos[1] + dy * length),
+                        xycoords='axes fraction', textcoords='axes fraction',
+                        color=color, ha=('left', 'center', 'left')[i],
+                        va=('center', 'bottom', 'bottom')[i])
+
+    units = r"$\left[ \mathrm{au} \right]$"
+    ax[0].set_ylabel(units)
+    ax[1].set_xlabel(units)
+
+    lim = max(np.abs([np.nanmin([jm.grid]), np.nanmax([jm.grid])]) * 1.2)
+    ax[0].set_xlim(-lim, lim)
+    ax[0].set_ylim(-lim, lim)
+
+    for i, a in enumerate(ax):
+        a.tick_params(which='both', direction='in', color='white', top='True',
+                      right='True')
+        for spine in ('left', 'right', 'top', 'bottom'):
+            a.spines[spine].set_color('white')
+        a.minorticks_on()
+        a.text(0.95, 0.95, ('a', 'b', 'c')[i], transform=a.transAxes,
+               ha='right', va='top', color='w')
+
+    ann_axes(ax[0], (0.05, 0.05), xlab=r'$y$', ylab=r'$z$', zlab=r'$x$')
+    ann_axes(ax[1], (0.05, 0.05), xlab=r'$x$', ylab=r'$z$', zlab=r'$y$')
+    ann_axes(ax[2], (0.05, 0.05), xlab=r'$x$', ylab=r'$y$', zlab=r'$z$')
+
+    ax[0].set_yticks(ax[0].get_xticks())
+
+    ax[0].set_xlim(-lim, lim)
+    ax[0].set_ylim(-lim, lim)
+
+    # inc_rads = np.radians(jm.params["geometry"]["inc"])
+    # pa_rads = np.radians(jm.params["geometry"]["pa"])
+    # ax[0].plot((np.tan(np.pi / 2. - inc_rads) * np.nanmax(jm.zz),
+    #             -np.tan(np.pi / 2. - inc_rads) * np.nanmax(jm.zz)),
+    #            (-np.nanmax(jm.zz), np.nanmax(jm.zz)), color='b', ls='--', lw=.5)
+    # ax[1].plot((np.tan(pa_rads) * np.nanmax(jm.zz),
+    #             -np.tan(pa_rads) * np.nanmax(jm.zz)),
+    #            (-np.nanmax(jm.zz), np.nanmax(jm.zz)), color='b', ls='--', lw=.5)
+
+    if savefig:
+        plt.savefig(savefig, bbox_inches='tight', dpi=300)
+
+    if show_plot:
+        plt.show()
