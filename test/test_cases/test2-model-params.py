@@ -32,6 +32,7 @@ params = {
                  "r_0": 10.,  # Launching radius (au)
                  "inc": -45.,  # Inclination angle (deg)
                  "pa": -60.,  # Jet position PA (deg), 60deg nominally
+                 "rotation": "CCW",  # Rotation sense, one of CCW or CW
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
                    "q_T": 0.,  # Temperature index

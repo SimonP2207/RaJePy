@@ -170,17 +170,17 @@ def xyz_to_rwp(x: Union[float, Iterable],
     -------
     Tuple of r, w, and phi coordinate arrays
     """
-    xyz_derotated = xyz_derotate(x, y, z, inc - 90., pa, order='xy')
+    xyz_derotated = xyz_rotate(x, y, z, inc - 90., pa, order='yx')
     w, p, r = cartesian_to_cylindrical(*xyz_derotated)
 
     return r, w, p
 
 
-def xyz_derotate(xr: Union[float, Iterable],
-                 yr: Union[float, Iterable],
-                 zr: Union[float, Iterable],
-                 alpha: float, beta: float,
-                 order: str = 'xy') -> Union[float, Iterable]:
+def xyz_rotate(x: Union[float, Iterable],
+               y: Union[float, Iterable],
+               z: Union[float, Iterable],
+               alpha: float, beta: float,
+               order: str = 'xy') -> Union[float, Iterable]:
     """
     Converts rotated (x, y, z) coordinate(s) to derotated (x, y, z)
     coordinate(s) given a rotation of defined x-rotation and y-rotation.
@@ -188,23 +188,23 @@ def xyz_derotate(xr: Union[float, Iterable],
 
     Parameters
     ----------
-    xr
-        Rotated x-coordinate(s)
-    yr
-        Rotated y-coordinate(s)
-    zr
-        Rotated z-coordinate(s)
+    x
+        x-coordinate(s)
+    y
+        y-coordinate(s)
+    z
+        z-coordinate(s)
     alpha
         Rotation angle around x-axis (right-handed), deg
     beta
         Rotation angle around y-axis (right-handed), deg
     order
-        Order in which to derotate. Default is 'xy' indicating derotate around
+        Order in which to rotate. Default is 'xy' indicating rotate around
         the x-axis first, the y-axis second. 'yx' only other legal value.
 
     Returns
     -------
-    Derotated (x, y, z) coordinate
+    Rotated (x, y, z) coordinate
     """
     a = np.radians(alpha)
     b = np.radians(beta)
@@ -221,11 +221,11 @@ def xyz_derotate(xr: Union[float, Iterable],
         return cos_b * x + sin_b * z, y, cos_b * z - sin_b * x
 
     if order.lower() == 'xy':
-        return y_rot(*x_rot(xr, yr, zr))
+        return y_rot(*x_rot(x, y, z))
     elif order.lower() == 'yx':
-        return x_rot(*y_rot(xr, yr, zr))
+        return x_rot(*y_rot(x, y, z))
     else:
-        raise ValueError(f"Order of derotation, {order.__repr__()}, not "
+        raise ValueError(f"Order of rotation, {order.__repr__()}, not "
                          "recognised")
 
 

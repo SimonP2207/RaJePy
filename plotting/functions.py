@@ -571,16 +571,15 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
     bl_cax.set_yticks(np.linspace(0., 100., 6))
 
     # Line-of-sight velocities (corrected for V_lsr) in bottom-right plot
-    vels_los = np.nanmean(jm.vel[1] - jm.params["target"]["v_lsr"],
-                          axis=jm.los_axis)
-    im_vs = br_ax.imshow(np.swapaxes(vels_los, 0, 1),
-                         vmin=np.nanmin(jm.vel[0]),
-                         vmax=np.nanmax(jm.vel[0]),
+    v_los = np.nanmean(jm.vel[1] - jm.params["target"]["v_lsr"],
+                       axis=jm.los_axis)
+    lim_v_los = np.nanmax(np.abs(v_los))
+    im_vs = br_ax.imshow(np.swapaxes(v_los, 0, 1),
+                         vmin=-lim_v_los, vmax=lim_v_los,
                          extent=im_extent,
                          cmap='coolwarm', aspect="equal", origin="lower")
     br_ax.set_xlim(np.array(br_ax.get_ylim()) * aspect)
-    make_colorbar(br_cax, np.nanmax(jm.vel[0]),
-                  cmin=np.nanmin(jm.vel[0]), position='right',
+    make_colorbar(br_cax, lim_v_los, cmin=-lim_v_los, position='right',
                   orientation='vertical', numlevels=50,
                   colmap='coolwarm', norm=im_vs.norm)
 
@@ -644,9 +643,18 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
     br_ax.axes.yaxis.set_ticklabels([])
 
     for ax in axes:
-        xlims = ax.get_xlim()
-        ax.set_xticks(ax.get_yticks())
-        ax.set_xlim(xlims)
+        ax.set_xlim(np.nanmin(im_extent), np.nanmax(im_extent))
+        ax.set_ylim(np.nanmin(im_extent), np.nanmax(im_extent))
+
+    for ax in axes:
+        if np.ptp(ax.get_xlim()) > np.ptp(ax.get_ylim()):
+            xlims = ax.get_ylim()
+            ax.set_xticks(ax.get_yticks())
+            ax.set_xlim(xlims)
+        else:
+            ylims = ax.get_xlim()
+            ax.set_yticks(ax.get_xticks())
+            ax.set_ylim(ylims)
         ax.tick_params(which='both', direction='in', top=True, right=True)
         ax.minorticks_on()
 

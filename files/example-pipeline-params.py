@@ -12,38 +12,24 @@ import os
 import numpy as np
 
 params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
-          'dcys':      {"model_dcy": os.sep.join([os.path.expanduser('~'),
-                                                 "Desktop", "RaJePyTest"])},
+          'dcys':      {"model_dcy": os.sep.join([os.getcwd(), 'test_output_dcy'])},
           # Continuum observations
-          'continuum': {'times': np.array([0.]),# np.linspace(0., 2., 20),  # yr
-                        'freqs':  np.array([0.058, 0.142, 0.323, 0.608,  # Hz
-                                            1.5, 3.0, 6., 10., 22., 33.,
-                                            43.])[-1:] * 1e9,
-                        't_obs':  np.array([28800, 28800, 28800, 28800,
-                                            1200, 1200, 3600, 1200,
-                                            1200, 1800, 2400])[6:7],
-                        'tscps':  np.array([('LOFAR', '0'), ('LOFAR', '0'),
-                                            ('GMRT', '0'), ('GMRT', '0'),
+          'continuum': {'times':  np.array([0.]),  # yr
+                        'freqs':  np.array([1.5, 3.0, 6., 10., 22., 33., 43., 5.05]) * 1e9,
+                        't_obs':  np.array([1200, 1200, 3600, 1200, 1200, 1800, 2400, 59400]),
+                        'tscps':  np.array([('VLA', 'A'), ('VLA', 'A'),
                                             ('VLA', 'A'), ('VLA', 'A'),
                                             ('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A')])[6:7],
-                        't_ints': np.array([5, 5, 5, 5, 5, 5,
-                                            5, 5, 5, 5, 5])[6:7],    # secs
-                        'bws':    np.array([30e6, 48e6, 32e6, 32e6,  # Hz
-                                            1e9, 2e9, 2e9, 4e9, 4e9,
-                                            4e9, 8e9])[6:7],  # Hz
-                        'chanws': np.array([1e9] * 11)[6:7]},  # int
+                                            ('VLA', 'A'), ('EMERLIN', '0')]),
+                        't_ints': np.array([5, 5, 5, 5, 5, 5, 5, 5]),    # secs
+                        'bws':    np.array([1e9, 2e9, 2e9, 4e9, 4e9, 4e9, 8e9, .5e9]),  # Hz
+                        'chanws': np.array([1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 2.e8])},  # int
           # Radio recombination line observations
-          'rrls':      {'times':  np.array([], dtype=float),#,  # yr
-                        'lines':  np.array(["H58a"]),  # str (Element+n+dn)
-                        't_obs':  np.array([60 * 60 * 10]),  # secs
+          'rrls':      {'times':  np.array([0.]),  # yr
+                        'lines':  np.array(['H58a']),  # str (Element+n+dn)
+                        't_obs':  np.array([30000]),  # secs
                         'tscps':  np.array([('VLA', 'A')]),  # (tscop, config)
                         't_ints': np.array([60]),  # secs
-                        'bws':    np.array([128e6]),  # Hz
-                        'chanws': np.array([1e6])},  # Hz
+                        'bws':    np.array([1e8]),  # Hz
+                        'chanws': np.array([1e5])},  # Hz
           }
-# ############################################################################ #
-if __name__ == '__main__':
-    from RaJePy.miscellaneous import functions
-    print(functions.check_pline_params(params))

@@ -22,7 +22,7 @@ params = {
     "grid": {"n_x": 50,  # No. of cells in x
              "n_y": 400,  # No. of cells in y
              "n_z": 50,  # No. of cells in z
-             "l_z": 1.,  # Length of z-axis. Overrides n_x/n_y/n_z.
+             "l_z": .5,  # Length of z-axis. Overrides n_x/n_y/n_z.
              "c_size": 0.5,  # Cell size (au)
              },
     "geometry": {"epsilon": 7. / 9.,  # Jet width index
@@ -30,7 +30,7 @@ params = {
                  "w_0": 1.,  # Half-width of jet base (au)
                  "r_0": 1.,  # Launching radius (au)
                  "inc": 90.,  # Inclination angle (deg), 0 <= i <= 90
-                 "pa": 0.,  # Blue-jet position angle (deg), 60deg nominally
+                 "pa": 70.,  # Blue-jet position angle (deg), 60deg nominally
                  "rotation": "CCW",  # Rotation sense, one of CCW or CW
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
