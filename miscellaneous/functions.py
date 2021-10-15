@@ -230,8 +230,78 @@ def freq_str(freq: Union[Iterable, float],
             freq_strs.append(f'{{:{fmt}}}{{}}'.format(f / fac, suffix))
         return freq_strs
 
+
+def reorder_axes(data: np.array, ra_axis: int, dec_axis: int,
+                 axis3: Union[None, int] = None,
+                 axis4: Union[None, int] = None,
+                 axis3_type: Union[None, str] = None,
+                 axis4_type: Union[None, str] = None):
+    """
+    Reorders numpy array axes to an order appropriate for saving as a .fits
+    file (using JetModel.save_fits method which utilises astropy.io.fits)
+
+    Parameters
+    ----------
+    data
+        Numpy array of data to reorder
+    ra_axis
+        Current axis position corresponding to right ascension
+    dec_axis
+        Current axis position corresponding to declination
+    axis3
+        Current axis position corresponding to 3rd axis e.g. spectral axis.
+        Optional, default is None. If specified, axis3_type must not be
+        None.
+    axis4
+        Current axis position corresponding to 4th axis e.g. Stokes axis.
+        Optional, default is None. If specified, axis4_type must not be
+        None.
+    axis3_type
+        Type of data represented via the 3rd axis e.g. 'freq'
+    axis4_type
+        Type of data represented via the 4th axis e.g. 'stokes'
+
+    Returns
+    -------
+    Copy of data reordered appropriately for saving as a .fits file
+
+    """
+    # Established current and required axes' positions
+    cur_axes = {'ra': ra_axis, 'dec': dec_axis}
+    req_axes = {'ra': 1, 'dec': 0}
+    if axis3 is not None:
+        cur_axes[axis3_type] = axis3
+        req_axes = {k: v + 1 for (k, v) in req_axes.items()}
+        req_axes[axis3_type] = 0
+        if axis4 is not None:
+            cur_axes[axis4_type] = axis4
+            req_axes = {k: v + 1 for (k, v) in req_axes.items()}
+            req_axes[axis4_type] = 0
+
+    # Define pairs of axes to swap with eachother using numpy.swapaxes
+    swaps = []
+    for ax_type in req_axes:
+        # Check that the current axes position needs to be reordered
+        if cur_axes[ax_type] != req_axes[ax_type]:
+            swaps.append((cur_axes[ax_type], req_axes[ax_type]))
+            # Update both current axis positions after the swap
+            for k, v in cur_axes.items():
+                if v == swaps[-1][1]:
+                    cur_axes[k] = cur_axes[ax_type]
+                    break
+            cur_axes[ax_type] = req_axes[ax_type]
+
+    # Conduct swaps on data (copy) axes
+    data_copy = np.copy(data)
+    for swap in swaps:
+        data_copy = np.swapaxes(data_copy, *swap)
+
+    return data_copy
+
+
 def is_iter(x):
     return isinstance(x, Iterable)
+
 
 if __name__ == '__main__':
     import os

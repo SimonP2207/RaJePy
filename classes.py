@@ -1023,7 +1023,10 @@ class JetModel:
         ems = np.nansum(ems, axis=self.los_axis)
 
         if savefits:
-            self.save_fits(ems, savefits, 'em')
+            self.save_fits(
+                miscf.reorder_axes(ems, ra_axis=0, dec_axis=1),
+                savefits, 'em'
+            )
 
         return ems
 
@@ -1072,11 +1075,10 @@ class JetModel:
 
         if isinstance(freq, Iterable):
             if collapse:
-                tau_rrl = np.empty((np.shape(freq)[0],
-                                    self.nx, self.nz))
+                tau_rrl = np.empty((np.shape(freq)[0], self.nx, self.nz))
             else:
-                tau_rrl = np.empty((np.shape(freq)[0],
-                                    self.nx, self.ny, self.nz))
+                tau_rrl = np.empty((np.shape(freq)[0], *np.shape(self.xx)))
+
             for idx, f in enumerate(freq):
                 kappa_rrl_lte = mrrl.kappa_l(f, rrl_n, fn1n2, phi_v(f),
                                              n_es,
@@ -1086,18 +1088,46 @@ class JetModel:
                                         (self.fill_factor / self.areas))
                 if collapse:
                     taus = np.nansum(taus, axis=self.los_axis)
+
                 tau_rrl[idx] = taus
+
+            if savefits:
+                if collapse:
+                    self.save_fits(
+                        miscf.reorder_axes(tau_rrl, ra_axis=1, dec_axis=2,
+                                           axis3=0, axis3_type='freq'),
+                        savefits, 'tau', freq
+                    )
+                else:
+                    self.save_fits(
+                        miscf.reorder_axes(tau_rrl, ra_axis=1, dec_axis=3,
+                                           axis3=2, axis3_type='y',
+                                           axis4=0, axis4_type='freq'),
+                        savefits, 'tau', freq
+                    )
+
         else:
             kappa_rrl_lte = mrrl.kappa_l(freq, rrl_n, fn1n2, phi_v(freq),
                                          n_es, mrrl.ni_from_ne(n_es, element),
                                          self.temperature, z_atom, en)
             tau_rrl = kappa_rrl_lte * (self.csize * con.au * 1e2 *
                                        (self.fill_factor / self.areas))
+
             if collapse:
                 tau_rrl = np.nansum(tau_rrl, axis=self.los_axis)
 
-        if savefits:
-            self.save_fits(tau_rrl, savefits, 'tau', freq)
+            if savefits:
+                if collapse:
+                    self.save_fits(
+                        miscf.reorder_axes(tau_rrl, ra_axis=0, dec_axis=1),
+                        savefits, 'tau', freq
+                    )
+                else:
+                    self.save_fits(
+                        miscf.reorder_axes(tau_rrl, ra_axis=0, dec_axis=2,
+                                           axis3=1, axis3_type='y'),
+                        savefits, 'tau', freq
+                    )
 
         return tau_rrl
 
@@ -1128,16 +1158,32 @@ class JetModel:
                                       self.temperature, np.NaN),
                              axis=self.los_axis)
 
-        tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, collapse=True,
-                                         savefits=False)
-        tau_ff = self.optical_depth_ff(freq, collapse=True)
+        if isinstance(freq, Iterable):
+            ints_rrl = np.empty((np.shape(freq)[0], self.nx, self.nz))
+            for idx, nu in enumerate(freq):
+                tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, collapse=True)
+                tau_ff = self.optical_depth_ff(freq, collapse=True)
+                i_rrl = mrrl.line_intensity_lte(freq, av_temp, tau_ff, tau_rrl)
+                ints_rrl[idx] = i_rrl
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(ints_rrl, ra_axis=1, dec_axis=2,
+                                       axis3=0, axis3_type='freq'),
+                    savefits, 'intensity', freq
+                )
 
-        i_rrl_lte = mrrl.line_intensity_lte(freq, av_temp, tau_ff, tau_rrl)
+        else:
+            tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, collapse=True)
+            tau_ff = self.optical_depth_ff(freq, collapse=True)
+            ints_rrl = mrrl.line_intensity_lte(freq, av_temp, tau_ff, tau_rrl)
 
-        if savefits:
-            self.save_fits(i_rrl_lte, savefits, 'intensity', freq)
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(ints_rrl, ra_axis=0, dec_axis=1),
+                    savefits, 'intensity', freq
+                )
 
-        return i_rrl_lte
+        return ints_rrl
 
     def flux_rrl(self, rrl: str,
                  freq: Union[float, Union[np.ndarray, List[float]]],
@@ -1177,6 +1223,13 @@ class JetModel:
                     flux += self.flux_ff(nu)
                 fluxes[idx] = flux
 
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(fluxes, ra_axis=1, dec_axis=2, axis3=0,
+                                       axis3_type='freq'),
+                    savefits, 'flux', freq
+                )
+
         else:
             i_rrl = self.intensity_rrl(rrl, freq, savefits=False)
             fluxes = i_rrl * np.arctan((self.csize * con.au) /
@@ -1185,8 +1238,11 @@ class JetModel:
             if not contsub:
                 fluxes += self.flux_ff(freq)
 
-        if savefits:
-            self.save_fits(fluxes, savefits, 'flux', freq)
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(fluxes, ra_axis=0, dec_axis=1),
+                    savefits, 'flux', freq
+                )
 
         return fluxes
 
@@ -1217,10 +1273,10 @@ class JetModel:
         # Equation 1.26 and 5.19b of Rybicki and Lightman (cgs). Averaged
         # path length through voxel is volume / projected area
         if isinstance(freq, Iterable):
-            if not collapse:
-                tff = np.empty((np.shape(freq)[0], self.nx, self.ny, self.nx))
-            else:
+            if collapse:
                 tff = np.empty((np.shape(freq)[0], self.nx, self.nz))
+            else:
+                tff = np.empty((np.shape(freq)[0], *np.shape(self.xx)))
             for idx, nu in enumerate(freq):
                 # Gaunt factors of van Hoof et al. (2014). Use if constant
                 # temperature as computation via this method across a grid
@@ -1239,6 +1295,21 @@ class JetModel:
                     tau = np.nansum(tau, axis=self.los_axis)
                 tff[idx] = tau
 
+                if savefits:
+                    if collapse:
+                        self.save_fits(
+                            miscf.reorder_axes(tff, ra_axis=1, dec_axis=2,
+                                               axis3=0, axis3_type='freq'),
+                            savefits, 'tau', freq
+                        )
+                    else:
+                        self.save_fits(
+                            miscf.reorder_axes(tff, ra_axis=1, dec_axis=3,
+                                               axis3=2, axis3_type='y',
+                                               axis4=0, axis4_type='freq'),
+                            savefits, 'tau', freq
+                        )
+
         else:
             # Gaunt factors of van Hoof et al. (2014). Use if constant temperature
             # as computation via this method across a grid takes too long
@@ -1256,8 +1327,18 @@ class JetModel:
             if collapse:
                 tff = np.nansum(tff, axis=self.los_axis)
 
-        if savefits:
-            self.save_fits(tff, savefits, 'tau', freq)
+            if savefits:
+                if collapse:
+                    self.save_fits(
+                        miscf.reorder_axes(tff, ra_axis=0, dec_axis=1),
+                        savefits, 'tau', freq
+                    )
+                else:
+                    self.save_fits(
+                        miscf.reorder_axes(tff, ra_axis=0, dec_axis=2,
+                                           axis3=1, axis3_type='y'),
+                        savefits, 'tau', freq
+                    )
 
         return tff
 
@@ -1289,6 +1370,12 @@ class JetModel:
 
                 iff = 2. * nu ** 2. * con.k * T_b / con.c ** 2.
                 ints_ff[idx] = iff
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(ints_ff, ra_axis=1, dec_axis=2,
+                                       axis3=0, axis3_type='freq'),
+                    savefits, 'intensity', freq
+                )
         else:
             T_b = np.nanmean(np.where(ts > 0., ts, np.NaN),
                              axis=self.los_axis) * \
@@ -1296,8 +1383,11 @@ class JetModel:
 
             ints_ff = 2. * freq ** 2. * con.k * T_b / con.c ** 2.
 
-        if savefits:
-            self.save_fits(ints_ff, savefits, 'intensity', freq)
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(ints_ff, ra_axis=0, dec_axis=1),
+                    savefits, 'intensity', freq
+                )
 
         return ints_ff
 
@@ -1326,22 +1416,33 @@ class JetModel:
                                       (self.params["target"]["dist"] *
                                        con.parsec)) ** 2. / 1e-26
                 fluxes[idx] = fs
-
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(fluxes, ra_axis=1, dec_axis=2,
+                                       axis3=0, axis3_type='freq'),
+                    savefits, 'flux', freq
+                )
         else:
             ints = self.intensity_ff(freq)
             fluxes = ints * np.arctan((self.csize * con.au) /
                                       (self.params["target"]["dist"] *
                                        con.parsec)) ** 2. / 1e-26
 
-        if savefits:
-            self.save_fits(fluxes, savefits, 'flux', freq)
+            if savefits:
+                self.save_fits(
+                    miscf.reorder_axes(fluxes, ra_axis=0, dec_axis=1),
+                    savefits, 'flux', freq
+                )
 
         return fluxes
 
     def save_fits(self, data: np.ndarray, filename: str, image_type: str,
                   freq: Union[float, list, np.ndarray, None] = None):
         """
-        Save .fits file of input data
+        Save .fits file of input data. For the data array, axis-0 must
+        correspond to declination, axis-1 to right ascension and axis-3 to
+        e.g. frequency. It is the responsibility of the caller to ensure axes
+        are in the correct order (use of numpy.swapaxes will be helpful here)
 
         Parameters
         ----------
@@ -1376,14 +1477,11 @@ class JetModel:
                                           con.parsec)))
 
         ndims = len(np.shape(data))
-        if ndims == 3:
-            # TODO: Following untested for Cartesian numpy array indexing ('xy')
-            hdu = fits.PrimaryHDU(np.swapaxes(np.swapaxes(data, 0, 2), 0, 1))
-        elif ndims == 2:
-            # TODO: Following untested for Cartesian numpy array indexing ('xy')
-            hdu = fits.PrimaryHDU(np.swapaxes(data, 0, 1))
-        else:
+
+        if ndims not in (2, 3):
             raise ValueError(f"Unexpected number of data dimensions ({ndims})")
+
+        hdu = fits.PrimaryHDU(data)
 
         # hdu = fits.PrimaryHDU(np.array([data]))
         hdul = fits.HDUList([hdu])
@@ -2165,13 +2263,12 @@ class Pipeline:
                     if not os.path.exists(run.fits_em) or clobber:
                         self.log.add_entry(mtype="INFO",
                                            entry="Emission measures saved to "
-                                                 "{}".format(run.fits_em))
+                                                 f"{run.fits_em}")
                         self.model.emission_measure(savefits=run.fits_em)
                     else:
                         self.log.add_entry(mtype="INFO",
                                            entry="Emission measures already "
-                                                 "exist -> {}"
-                                                 "".format(run.fits_em),
+                                                 f"exist -> {run.fits_em}",
                                            timestamp=False)
 
                     # Radiative transfer
@@ -2179,51 +2276,45 @@ class Pipeline:
                         if not os.path.exists(run.fits_tau) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Computing optical depths "
-                                                     "and saving to {}"
-                                                     "".format(run.fits_tau))
+                                                     "and saving to "
+                                                     f"{run.fits_tau}")
                             self.model.optical_depth_ff(run.chan_freqs,
                                                         savefits=run.fits_tau)
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Optical depths already "
-                                                     "exist -> {}"
-                                                     "".format(run.fits_tau),
+                                                     f"exist -> {run.fits_tau}",
                                                timestamp=False)
                         if not os.path.exists(run.fits_flux) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Calculating fluxes and "
-                                                     "saving to {}"
-                                                     "".format(run.fits_flux))
+                                                     f"saving to {run.fits_flux}")
                             fluxes = self.model.flux_ff(run.chan_freqs,
                                                         savefits=run.fits_flux)
                             # fluxes = fluxes.T
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already "
-                                                     "exist -> {}"
-                                                     "".format(run.fits_flux),
+                                                     f"exist -> {run.fits_flux}",
                                                timestamp=False)
                             fluxes = fits.open(run.fits_flux)[0].data[0]
                     else:
                         if not os.path.exists(run.fits_tau) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Computing optical depths "
-                                                     "and saving to {}"
-                                                     "".format(run.fits_tau))
+                                                     f"and saving to {run.fits_tau}")
                             self.model.optical_depth_rrl(run.line,
                                                          run.chan_freqs,
                                                          savefits=run.fits_tau)
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Optical depths already "
-                                                     "exist -> {}"
-                                                     "".format(run.fits_tau),
+                                                     f"exist -> {run.fits_tau}",
                                                timestamp=False)
                         if not os.path.exists(run.fits_flux) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Calculating fluxes and "
-                                                     "saving to {}"
-                                                     "".format(run.fits_flux))
+                                                     f"saving to {run.fits_flux}")
                             fluxes = self.model.flux_rrl(run.line,
                                                          run.chan_freqs,
                                                          contsub=False,
@@ -2232,18 +2323,15 @@ class Pipeline:
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already "
-                                                     "exist -> {}"
-                                                     "".format(run.fits_flux),
+                                                     f"exist -> {run.fits_flux}",
                                                timestamp=False)
                             fluxes = fits.open(run.fits_flux)[0].data[0]
 
-                    print(format(run.freq, '.1e') + 'GHz ', np.shape(fluxes))
                     if run.obs_type == 'continuum':
                         flux = np.nansum(np.nanmean(fluxes, axis=0))
                         self.log.add_entry(mtype="INFO",
                                            entry="Total, average, channel flux "
-                                                 "of {:.2e}Jy "
-                                                 "calculated".format(flux))
+                                                 f"of {flux:.2e}Jy calculated")
                     else:
                         flux = np.nansum(np.nansum(fluxes, axis=1), axis=1)
                     self.runs[idx].results['flux'] = flux
@@ -2552,7 +2640,7 @@ class Pipeline:
                                              weighting='briggs',
                                              robust=0.5,
                                              niter=500,
-                                             nsigma=2.5,
+                                             nsigma=3.,
                                              specmode=specmode,
                                              restfreq=restfreq,
                                              mask=mask_str,
@@ -3064,68 +3152,76 @@ class Pointing(object):
 if __name__ == '__main__':
 
 
-    import matplotlib.cm
-    import matplotlib.pylab as plt
 
+
+    # import matplotlib.cm
+    # import matplotlib.pylab as plt
+    #
     param_dcy = os.sep.join([os.path.dirname(__file__), 'test', 'test_cases'])
     jm = JetModel(os.sep.join([param_dcy, 'test1-model-params.py']))
-
     pl = Pipeline(jm, os.sep.join([param_dcy, 'test1-pipeline-params.py']))
 
-    # from RaJePy.plotting import functions as plotf
-    # plotf.model_plot(jm, show_plot=True)
-
-    ns = jm.fill_factor
-    sum_ns_y = np.nansum(ns, axis=1)
-
-    if jm._arr_indexing == 'ij':
-        # hdu = fits.PrimaryHDU(np.flip(np.swapaxes(ns, 2, 0), axis=1))
-        # Swap x-axis for z-axis and then z-axis for y-axis since
-        # NAXIS1 = numpy axis 2, NAXIS2 = numpy axis 1 and NAXIS3 = numpy axis 0
-        hdu3d = fits.PrimaryHDU(np.swapaxes(np.swapaxes(ns, 0, 2), 0, 1))
-        hdu2d = fits.PrimaryHDU(np.swapaxes(sum_ns_y, 0, 1))
-        hdu3drs = fits.PrimaryHDU(np.swapaxes(np.swapaxes(jm.rr, 0, 2), 0, 1))
-        hdu2drs = fits.PrimaryHDU(np.swapaxes(np.nansum(jm.rr, axis=1), 0, 1))
-        hdu3dphis = fits.PrimaryHDU(np.degrees(np.swapaxes(np.swapaxes(np.where(np.isnan(jm.fill_factor), np.nan, jm.pp), 0, 2), 0, 1)))
-
-    elif jm._arr_indexing == 'xy':
-        # hdu = fits.PrimaryHDU(np.nansum(ns, axis=0).T)
-        hdu3d = fits.PrimaryHDU(ns)
-    else:
-        raise ValueError(f"Array indexing should be 'ij' or 'xy', not "
-                         f"{jm._arr_indexing.__repr__()}")
+    ns = miscf.reorder_axes(jm.number_density, 0, 2, 1, None, 'y', None)
+    hdu3d = fits.PrimaryHDU(ns)
     hdul3d = fits.HDUList([hdu3d])
     fitsfile3d = r'C:/Users/simon/Desktop/ns3d.fits'
     if os.path.exists(fitsfile3d):
         os.remove(fitsfile3d)
     hdul3d.writeto(fitsfile3d)
-
-    hdul2d = fits.HDUList([hdu2d])
-    fitsfile2d = r'C:/Users/simon/Desktop/ns2d.fits'
-    if os.path.exists(fitsfile2d):
-        os.remove(fitsfile2d)
-    hdul2d.writeto(fitsfile2d)
-
-    hdul2drs = fits.HDUList([hdu2drs])
-    fitsfile2drs = r'C:/Users/simon/Desktop/rs2d.fits'
-    if os.path.exists(fitsfile2drs):
-        os.remove(fitsfile2drs)
-    hdul2drs.writeto(fitsfile2drs)
-
-    hdul3drs = fits.HDUList([hdu3drs])
-    fitsfile3drs = r'C:/Users/simon/Desktop/rs3d.fits'
-    if os.path.exists(fitsfile3drs):
-        os.remove(fitsfile3drs)
-    hdul3drs.writeto(fitsfile3drs)
-
-    hdul3dphis = fits.HDUList([hdu3dphis])
-    fitsfile3dphis = r'C:/Users/simon/Desktop/phis3d.fits'
-    if os.path.exists(fitsfile3dphis):
-        os.remove(fitsfile3dphis)
-    hdul3dphis.writeto(fitsfile3dphis)
-
-
-    print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")
+    # # from RaJePy.plotting import functions as plotf
+    # # plotf.model_plot(jm, show_plot=True)
+    #
+    # ns = jm.fill_factor
+    # sum_ns_y = np.nansum(ns, axis=1)
+    #
+    # if jm._arr_indexing == 'ij':
+    #     # hdu = fits.PrimaryHDU(np.flip(np.swapaxes(ns, 2, 0), axis=1))
+    #     # Swap x-axis for z-axis and then z-axis for y-axis since
+    #     # NAXIS1 = numpy axis 2, NAXIS2 = numpy axis 1 and NAXIS3 = numpy axis 0
+    #     hdu3d = fits.PrimaryHDU(np.swapaxes(np.swapaxes(ns, 0, 2), 0, 1))
+    #     hdu2d = fits.PrimaryHDU(np.swapaxes(sum_ns_y, 0, 1))
+    #     hdu3drs = fits.PrimaryHDU(np.swapaxes(np.swapaxes(jm.rr, 0, 2), 0, 1))
+    #     hdu2drs = fits.PrimaryHDU(np.swapaxes(np.nansum(jm.rr, axis=1), 0, 1))
+    #     hdu3dphis = fits.PrimaryHDU(np.degrees(np.swapaxes(np.swapaxes(np.where(np.isnan(jm.fill_factor), np.nan, jm.pp), 0, 2), 0, 1)))
+    #
+    # elif jm._arr_indexing == 'xy':
+    #     # hdu = fits.PrimaryHDU(np.nansum(ns, axis=0).T)
+    #     hdu3d = fits.PrimaryHDU(ns)
+    # else:
+    #     raise ValueError(f"Array indexing should be 'ij' or 'xy', not "
+    #                      f"{jm._arr_indexing.__repr__()}")
+    # hdul3d = fits.HDUList([hdu3d])
+    # fitsfile3d = r'C:/Users/simon/Desktop/ns3d.fits'
+    # if os.path.exists(fitsfile3d):
+    #     os.remove(fitsfile3d)
+    # hdul3d.writeto(fitsfile3d)
+    #
+    # hdul2d = fits.HDUList([hdu2d])
+    # fitsfile2d = r'C:/Users/simon/Desktop/ns2d.fits'
+    # if os.path.exists(fitsfile2d):
+    #     os.remove(fitsfile2d)
+    # hdul2d.writeto(fitsfile2d)
+    #
+    # hdul2drs = fits.HDUList([hdu2drs])
+    # fitsfile2drs = r'C:/Users/simon/Desktop/rs2d.fits'
+    # if os.path.exists(fitsfile2drs):
+    #     os.remove(fitsfile2drs)
+    # hdul2drs.writeto(fitsfile2drs)
+    #
+    # hdul3drs = fits.HDUList([hdu3drs])
+    # fitsfile3drs = r'C:/Users/simon/Desktop/rs3d.fits'
+    # if os.path.exists(fitsfile3drs):
+    #     os.remove(fitsfile3drs)
+    # hdul3drs.writeto(fitsfile3drs)
+    #
+    # hdul3dphis = fits.HDUList([hdu3dphis])
+    # fitsfile3dphis = r'C:/Users/simon/Desktop/phis3d.fits'
+    # if os.path.exists(fitsfile3dphis):
+    #     os.remove(fitsfile3dphis)
+    # hdul3dphis.writeto(fitsfile3dphis)
+    #
+    #
+    # print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")
     from RaJePy.plotting import functions as plotf
     plotf.plot_geometry(jm, savefig="C:/Users/simon/Desktop/geometry_plot.pdf", show_plot=False)
-    plotf.model_plot(jm, savefig="C:/Users/simon/Desktop/model_plot.pdf", show_plot=True)
+    # plotf.model_plot(jm, savefig="C:/Users/simon/Desktop/model_plot.pdf", show_plot=True)
