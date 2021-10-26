@@ -222,7 +222,9 @@ Imaging/pipeline parameters defining continuum radiative-transfer/synthetic obse
 | `"t_ints"`    | Visibility integration times (s)                               | `np.array` with `dtype=int`             | `np.array([5, 3, 3, 2])`                                                 |
 | `"bws"`       | Bandwidths (Hz)                                                | `np.array` with `dtype=float`           | `np.array([0.5e9, 2e9, 2e9, 4e9])`                                       |
 | `"chanws"`    | Channel widths within bandwidth (Hz)                           | `np.array` with `dtype=int`             | `np.array([1, 1, 1, 1])`                                                 |
+
 **NB** - Specified arrays for `"freqs"`, `"t_obs"`, `"tscps"`, `"t_int"`, `"bws"` and `"chanws"` should all have the same length. Array values at the same indices in each of those arrays are used in combination to define the observational parameters for one run.
+
 ### Pipeline-parameter section `'rrls'`
 Imaging/pipeline parameters defining radio recombination line radiative-transfer/synthetic observations are defined here. When executed, radiative transfer and/or synthetic observations are conducted at each value of `"times"`, for each value of `"lines"`. For example, if `"times"` specified are 0, 1 and 10 years, whilst the observed RRL lines are specified as H48a and H58a, a total of 6 radiative transfer/synthetic observations will be conducted.
 
