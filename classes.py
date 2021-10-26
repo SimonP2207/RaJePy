@@ -1936,7 +1936,8 @@ class Pipeline:
 
         return pl.params
 
-    def __init__(self, jetmodel, params, log=None):
+    def __init__(self, jetmodel: JetModel, params: Union[dict, str],
+                 log: Union[None, logger.Log] = None):
         """
 
         Parameters
@@ -1947,6 +1948,8 @@ class Pipeline:
             Either a dictionary containing all necessary radiative transfer and
             synthetic observation parameters, or a full path to a parameter
             file.
+        log
+            logger.Log instance acting as a log. Default is None.
         """
         if isinstance(jetmodel, JetModel):
             self.model = jetmodel
@@ -1966,9 +1969,9 @@ class Pipeline:
         self.model_file = self.model_dcy + os.sep + "jetmodel.save"
         self.save_file = self.model_dcy + os.sep + "modelrun.save"
 
-        # Create Log for ModelRun instance
+        # Create Log for Pipeline instance
         import time
-        log_name = "ModelRun_"
+        log_name = "Pipeline_"
         log_name += time.strftime("%Y%m%d%H-%M-%S", time.localtime())
         log_name += ".log"
 
@@ -2401,8 +2404,8 @@ class Pipeline:
                 ew_int = False  # Is the telescope an E-W interferometer?
 
                 # Number of scans through ha-range for E-W interferometers
-                # during the final `day of observations' --> ARBITRARY
-                # HARD-CODED VALUE SET OF 8 SCANS
+                # during the final `day of observations'
+                # TODO: ARBITRARY HARD-CODED VALUE SET OF 8 SCANS
                 ew_split_final_n = 8
 
                 if tscop in casa.observatories.EW_TELESCOPES:
@@ -2726,9 +2729,11 @@ class Pipeline:
 
         return None  # self.runs[idx]['products']
 
+    # TODO: Move this to RaJePy.plotting.functions
     def plot_continuum_fluxes(self, plot_time: float,
                               plot_reynolds: bool = True,
                               savefig: bool = False) -> None:
+        import matplotlib.pylab as plt
         freqs, fluxes = [], []
         freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
         for idx, run in enumerate(self.runs):
@@ -2868,63 +2873,64 @@ class Pipeline:
                         metadata=pdf_metadata, dpi=300)
         return None
 
-    def jml_profile_plot(self, ax=None, savefig: Union[bool, str] = False):
-        """
-        Plot ejection profile using matlplotlib and overplot pipeline's
-        observational epochs
+    # def jml_profile_plot(self, ax=None, savefig: Union[bool, str] = False):
+    #     """
+    #     Plot ejection profile using matlplotlib and overplot pipeline's
+    #     observational epochs
+    #
+    #     Parameters
+    #     ----------
+    #     ax : matplotlib.axes._axes.Axes
+    #         Axis to plot to
+    #
+    #     savefig: bool, str
+    #         Whether to save the radio plot to file. If False, will not, but if
+    #         a str representing a valid path will save to that path.
+    #
+    #     Returns
+    #     -------
+    #     numpy.array giving mass loss rates
+    #
+    #     """
+    #     t_cont = self.params['continuum']['times']
+    #     t_rrl = self.params['rrls']['times']
+    #
+    #     ts = set(np.append(t_rrl, t_cont))
+    #     jmls = [self.model.jml_t(t * con.year) * 1.58552e-23 for t in ts]
+    #
+    #     if ax is None:
+    #         fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
+    #                                               cfg.plots['dims']['column']))
+    #
+    #     _, times, __ = pfunc.jml_profile_plot(self.model, ax=ax)
+    #
+    #     xlims = 0, np.nanmax(times / con.year)
+    #     ax.set_yscale('log')
+    #
+    #     ylims = (10 ** np.floor(np.log10(np.nanmin(jmls))),
+    #              10 ** np.ceil(np.log10(np.nanmax(jmls))))
+    #
+    #     # Plot continuum-only time as down-marker, rrl-only time as up-marker
+    #     # and both as full line
+    #     for i, t in enumerate(ts):
+    #         ax.plot([t, t], [jmls[i], ylims[0]], ls='-', lw=.5,
+    #                 color='cornflowerblue', zorder=1,
+    #                 label=r'$t_{\rm obs}$' if i == 0 else None)
+    #
+    #     ax.set_xlim(*xlims)
+    #     ax.set_ylim(*ylims)
+    #
+    #     ax.legend(loc=1)
+    #     ax.minorticks_on()
+    #     ax.tick_params(which='both', axis='both', direction='in',
+    #                    bottom=True, top=True, left=True, right=True)
+    #
+    #     if savefig:
+    #         plt.savefig(savefig, bbox_inches='tight', dpi=300)
+    #
+    #     return ax
 
-        Parameters
-        ----------
-        ax : matplotlib.axes._axes.Axes
-            Axis to plot to
-
-        savefig: bool, str
-            Whether to save the radio plot to file. If False, will not, but if
-            a str representing a valid path will save to that path.
-
-        Returns
-        -------
-        numpy.array giving mass loss rates
-
-        """
-        t_cont = self.params['continuum']['times']
-        t_rrl = self.params['rrls']['times']
-
-        ts = set(np.append(t_rrl, t_cont))
-        jmls = [self.model.jml_t(t * con.year) * 1.58552e-23 for t in ts]
-
-        if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
-                                                  cfg.plots['dims']['column']))
-
-        _, times, __ = pfunc.jml_profile_plot(self.model, ax=ax)
-
-        xlims = 0, np.nanmax(times / con.year)
-        ax.set_yscale('log')
-
-        ylims = (10 ** np.floor(np.log10(np.nanmin(jmls))),
-                 10 ** np.ceil(np.log10(np.nanmax(jmls))))
-
-        # Plot continuum-only time as down-marker, rrl-only time as up-marker
-        # and both as full line
-        for i, t in enumerate(ts):
-            ax.plot([t, t], [jmls[i], ylims[0]], ls='-', lw=.5,
-                    color='cornflowerblue', zorder=1,
-                    label=r'$t_{\rm obs}$' if i == 0 else None)
-
-        ax.set_xlim(*xlims)
-        ax.set_ylim(*ylims)
-
-        ax.legend(loc=1)
-        ax.minorticks_on()
-        ax.tick_params(which='both', axis='both', direction='in',
-                       bottom=True, top=True, left=True, right=True)
-
-        if savefig:
-            plt.savefig(savefig, bbox_inches='tight', dpi=300)
-
-        return ax
-
+    # TODO: Move this to RaJePy.plotting.functions
     def radio_plot(self, run: Union[ContinuumRun, RRLRun],
                    percentile: float = 5., savefig: Union[bool, str] = False):
         """
@@ -2949,6 +2955,7 @@ class Pipeline:
         -------
         None.
         """
+        import matplotlib.pylab as plt
         import matplotlib.gridspec as gridspec
 
         plt.close('all')
