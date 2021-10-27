@@ -61,6 +61,37 @@ def rho(r: Union[float, Iterable], r_0: float,
         return np.abs(r) / r_0
 
 
+def cell_value(zero_val: float, rho: Union[float, Iterable],
+               reff: Union[float, Iterable], r1: float, q: float,
+               qd: float) -> Union[float, Iterable]:
+    """
+    Equation to calculate a cell's physical parameter value. Make sure units for
+    args are all consistent.
+
+    Parameters
+    ----------
+    zero_val
+        Value of physical parameter at r=0, w=0
+    rho
+        Distance along r-axis in units of r_0
+    reff
+        Radius in the accretion disc at which the cell's material was sources
+    r1
+        Inner radius of disc for launch of material
+    q
+        Power-law exponent for the behaviour of the physical quantity as a
+        function of rho
+    qd
+        Power-law exponent for the behaviour of the physical quantity as a
+        function of (reff / r1)
+
+    Returns
+    -------
+    Value of physical quantity in cell
+    """
+    vals = zero_val * rho ** q * (reff / r1) ** qd
+    return vals
+
 def w_r(r: Union[float, Iterable], w_0: float, mr0: float, r_0: float,
         eps: float) -> Union[float, Iterable]:
     """

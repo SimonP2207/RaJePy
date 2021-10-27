@@ -137,11 +137,10 @@ Power-law coefficients defining the physical model in velocity, temperature, ion
 | `"q_T"`       | Power-law coefficient for jet temperature as function of r                                | `float` | `-0.5`  |
 | `"q_x"`       | Power-law coefficient for jet ionisation fraction as function of r                        | `float` | `0.0`   |
 | `"q^d_n"`     | Cross-sectional power-law coefficient for jet number density as function of w             | `float` | `-2.0`  |
-| `"q^d_T"`     | Cross-sectional power-law coefficient for jet electron temperature as function of w **[NOT IMPLEMENTED]** | `float` | `-2.0`  |
-| `"q^d_v"`     | Cross-sectional power-law coefficient for jet velocity as function of w             **[NOT IMPLEMENTED]** | `float` | `-0.5`  |
+| `"q^d_T"`     | Cross-sectional power-law coefficient for jet electron temperature as function of w  | `float` | `-2.0`  |
+| `"q^d_v"`     | Cross-sectional power-law coefficient for jet velocity as function of w     | `float` | `-0.5`  |
 | `"q^d_x"`     | Cross-sectional power-law coefficient for jet ionisation fraction as function of w | `float` | `-2.0`  |
 
-**NB** - Please note that any of the above parameters which are not implemented shall be set to a value of 0 before the initiation of the model.
 
 ### Model-parameter section `'properties'`
 Jet physical parameter values
@@ -368,4 +367,6 @@ Python >= 3.6 (f-string dependence)
 - ~~Incorporate inclination into jet model~~
 - ~~Incorporate position angle into jet model~~
 - ~~Implement more than one channel across bandwidth for more accurate multi-frequency synthesis~~
+- Incorporate 
 - Parallelise code, especially different synthetic observations and model calculations
+- Incorporate non-LTE effects into RRL radiative transfer calculations

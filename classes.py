@@ -824,15 +824,20 @@ class JetModel:
         if self._nd is not None:
             return self._nd * self.chi_xyz
 
-        r1 = self.params["target"]["R_1"] * con.au * 1e2
-        mr0 = self.params['geometry']['mod_r_0'] * con.au * 1e2
-        r0 = self.params['geometry']['r_0'] * con.au * 1e2
+        r1 = self.params["target"]["R_1"]
+        mr0 = self.params['geometry']['mod_r_0']
+        r0 = self.params['geometry']['r_0']
         q_n = self.params["power_laws"]["q_n"]
         q_nd = self.params["power_laws"]["q^d_n"]
         n_0 = self.params["properties"]["n_0"]
 
-        nd = n_0 * mgeom.rho(self.rr * con.au * 1e2, r0, mr0) ** q_n * \
-             (self.rreff * con.au * 1e2 / r1) ** q_nd
+        r = np.abs(self.rr)
+        r = np.where((r < r0) & ((r + self.csize / 2.) >= r0),
+                     (r0 + r + self.csize / 2.) / 2., r)
+        # nd = n_0 * mgeom.rho(self.rr, r0, mr0) ** q_n * \
+        #      (self.rreff / r1) ** q_nd
+        nd = mgeom.cell_value(n_0, mgeom.rho(r, r0, mr0), self.rreff,
+                              r1, q_n, q_nd)
         nd = np.where(self.fill_factor > 0, nd, np.NaN)
         nd = np.where(nd == 0, np.NaN, nd)
 
@@ -860,18 +865,20 @@ class JetModel:
             return self._xi
 
         R_1 = self.params["target"]["R_1"]
-        mod_r_0 = self.params['geometry']['mod_r_0'] * con.au * 1e2
-        r_0 = self.params['geometry']['r_0'] * con.au * 1e2
+        mod_r_0 = self.params['geometry']['mod_r_0']
+        r_0 = self.params['geometry']['r_0']
         q_x = self.params["power_laws"]["q_x"]
         q_xd = self.params["power_laws"]["q^d_x"]
         x_0 = self.params["properties"]["x_0"]
 
-        r = np.abs(self.rr) * con.au * 1e2
-        r = np.where((r < r_0) & ((r + self.csize * con.au * 1e2 / 2.) >= r_0),
-                     (r_0 + r + self.csize * con.au * 1e2 / 2.) / 2., r)
+        r = np.abs(self.rr)
+        r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+                     (r_0 + r + self.csize / 2.) / 2., r)
 
-        xi = x_0 * mgeom.rho(r, r_0, mod_r_0) ** q_x * \
-             (self.rreff / R_1) ** q_xd
+        # xi = x_0 * mgeom.rho(r, r_0, mod_r_0) ** q_x * \
+        #      (self.rreff / R_1) ** q_xd
+        xi = mgeom.cell_value(x_0, mgeom.rho(r, r_0, mod_r_0), self.rreff,
+                                R_1, q_x, q_xd)
         xi = np.where(self.fill_factor > 0, xi, np.NaN)
         xi = np.where(xi == 0, np.NaN, xi)
 
@@ -892,33 +899,55 @@ class JetModel:
         if self._temp is not None:
             return self._temp
 
-        z = np.abs(self.rr)
-        a = z - 0.5 * self.csize
-        b = z + 0.5 * self.csize
+        R_1 = self.params["target"]["R_1"]
+        mod_r_0 = self.params['geometry']['mod_r_0']
+        r_0 = self.params['geometry']['r_0']
+        q_T = self.params["power_laws"]["q_T"]
+        q_Td = self.params["power_laws"]["q^d_T"]
+        T_0 = self.params["properties"]["T_0"]
 
-        a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
-        b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
+        r = np.abs(self.rr) * con.au * 1e2
+        r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+                     (r_0 + r + self.csize / 2.) / 2., r)
 
-        a = np.where(a <= self.params['geometry']['r_0'],
-                     self.params['geometry']['r_0'], a)
+        # temp = T_0 * mgeom.rho(r, r_0, mod_r_0) ** q_T * \
+        #        (self.rreff / R_1) ** q_Td
+        temp = mgeom.cell_value(T_0, mgeom.rho(r, r_0, mod_r_0), self.rreff,
+                                R_1, q_T, q_Td)
+        temp = np.where(self.fill_factor > 0, temp, np.NaN)
+        temp = np.where(temp == 0, np.NaN, temp)
 
-        # TODO: q^d_T dependence needed here
-        def indefinite_integral(z):
-            num_p1 = self.params['properties']['T_0'] * \
-                     self.params["geometry"]["mod_r_0"]
-            num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
-                       self.params["geometry"]["r_0"]) /
-                      (self.params["geometry"]["mod_r_0"]))
-            num_p2 = num_p2 ** (self.params["power_laws"]["q_T"] + 1.)
-            den = self.params["power_laws"]["q_T"] + 1.
-            return num_p1 * num_p2 / den
-
-        ts = indefinite_integral(b) - indefinite_integral(a)
-        ts /= b - a
-        ts = np.where(self.fill_factor > 0., ts, np.NaN)
-        self.temperature = ts
+        self.temperature = np.nan_to_num(temp, nan=np.NaN, posinf=np.NaN,
+                                         neginf=np.NaN)
 
         return self.temperature
+
+        # z = np.abs(self.rr)
+        # a = z - 0.5 * self.csize
+        # b = z + 0.5 * self.csize
+        #
+        # a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
+        # b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
+        #
+        # a = np.where(a <= self.params['geometry']['r_0'],
+        #              self.params['geometry']['r_0'], a)
+        #
+        # def indefinite_integral(z):
+        #     num_p1 = self.params['properties']['T_0'] * \
+        #              self.params["geometry"]["mod_r_0"]
+        #     num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
+        #                self.params["geometry"]["r_0"]) /
+        #               (self.params["geometry"]["mod_r_0"]))
+        #     num_p2 = num_p2 ** (self.params["power_laws"]["q_T"] + 1.)
+        #     den = self.params["power_laws"]["q_T"] + 1.
+        #     return num_p1 * num_p2 / den
+        #
+        # ts = indefinite_integral(b) - indefinite_integral(a)
+        # ts /= b - a
+        # ts = np.where(self.fill_factor > 0., ts, np.NaN)
+        # self.temperature = ts
+        #
+        # return self.temperature
 
     @temperature.setter
     def temperature(self, new_ts: np.ndarray):
@@ -939,31 +968,54 @@ class JetModel:
         if self._v is not None:
             return self._v
 
-        r = np.abs(self.rr)
+        # r = np.abs(self.rr)
+        #
+        # r_0 = self.params['geometry']['r_0']
+        # mr0 = self.params['geometry']['mod_r_0']
+        #
+        # a = r - 0.5 * self.csize
+        # b = r + 0.5 * self.csize
+        #
+        # a = np.where(b <= r_0, np.NaN, a)
+        # b = np.where(b <= r_0, np.NaN, b)
+        #
+        # a = np.where(a <= r_0, r_0, a)
+        #
+        # def indefinite_integral(_r):
+        #     num_p1 = self.params['properties']['v_0'] * mr0
+        #     num_p2 = (_r + mr0 - r_0) / mr0
+        #     num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
+        #     den = self.params["power_laws"]["q_v"] + 1.
+        #     return num_p1 * num_p2 / den
+        #
+        # vz = indefinite_integral(b) - indefinite_integral(a)
+        # vz /= b - a
+        #
+        # vz = np.where(self.fill_factor > 0., vz, np.NaN) * np.sign(self.rr)
 
+
+        R_1 = self.params["target"]["R_1"]
+        mod_r_0 = self.params['geometry']['mod_r_0']
         r_0 = self.params['geometry']['r_0']
         mr0 = self.params['geometry']['mod_r_0']
+        q_v = self.params["power_laws"]["q_v"]
+        q_vd = self.params["power_laws"]["q^d_v"]
+        v_0 = self.params["properties"]["v_0"]
 
-        a = r - 0.5 * self.csize
-        b = r + 0.5 * self.csize
+        r = np.abs(self.rr)
+        r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+                     (r_0 + r + self.csize / 2.) / 2., r)
 
-        a = np.where(b <= r_0, np.NaN, a)
-        b = np.where(b <= r_0, np.NaN, b)
+        # vz = v_0 * mgeom.rho(r, r_0, mod_r_0) ** q_v * \
+        #      (self.rreff / R_1) ** q_vd
+        vz = mgeom.cell_value(v_0, mgeom.rho(r, r_0, mod_r_0), self.rreff, R_1,
+                              q_v, q_vd)
+        vz = np.where(self.fill_factor > 0, vz, np.NaN)
+        vz = np.where(vz == 0, np.NaN, vz)
 
-        a = np.where(a <= r_0, r_0, a)
+        vz = np.nan_to_num(vz, nan=np.NaN, posinf=np.NaN,
+                           neginf=np.NaN) * np.sign(self.rr)
 
-        # TODO: q^d_v dependence needed here
-        def indefinite_integral(_r):
-            num_p1 = self.params['properties']['v_0'] * mr0
-            num_p2 = (_r + mr0 - r_0) / mr0
-            num_p2 = num_p2 ** (self.params["power_laws"]["q_v"] + 1.)
-            den = self.params["power_laws"]["q_v"] + 1.
-            return num_p1 * num_p2 / den
-
-        vz = indefinite_integral(b) - indefinite_integral(a)
-        vz /= b - a
-
-        vz = np.where(self.fill_factor > 0., vz, np.NaN) * np.sign(self.rr)
         vr = mphys.v_rot(self.rr, self.rreff, mgeom.rho(self.rr, r_0, mr0),
                          self.params['geometry']['epsilon'],
                          self.params['target']['M_star'])
@@ -993,9 +1045,9 @@ class JetModel:
         #             vys[idxx][idxy][idxz] = y
         #             vzs[idxx][idxy][idxz] = z
         vxs, vys, vzs = mgeom.xyz_rotate(vx, vy, vz, 90. - i, -pa, order='xy')
-        self._v = (vxs, vys + self.params["target"]["v_lsr"], vzs)
+        self.vel = (vxs, vys + self.params["target"]["v_lsr"], vzs)
 
-        return self._v
+        return self.vel
 
     @vel.setter
     def vel(self, new_vs: np.ndarray):
@@ -3168,13 +3220,14 @@ if __name__ == '__main__':
     jm = JetModel(os.sep.join([param_dcy, 'test1-model-params.py']))
     pl = Pipeline(jm, os.sep.join([param_dcy, 'test1-pipeline-params.py']))
 
-    ns = miscf.reorder_axes(jm.number_density, 0, 2, 1, None, 'y', None)
-    hdu3d = fits.PrimaryHDU(ns)
-    hdul3d = fits.HDUList([hdu3d])
-    fitsfile3d = r'C:/Users/simon/Desktop/ns3d.fits'
-    if os.path.exists(fitsfile3d):
-        os.remove(fitsfile3d)
-    hdul3d.writeto(fitsfile3d)
+    # ns = miscf.reorder_axes(jm.number_density, 0, 2, 1, None, 'y', None)
+    # hdu3d = fits.PrimaryHDU(ns)
+    # hdul3d = fits.HDUList([hdu3d])
+    dcy = os.path.expanduser('~')
+    fitsfile3d = os.sep.join([dcy, 'ns3d.fits'])
+    # if os.path.exists(fitsfile3d):
+    #     os.remove(fitsfile3d)
+    # hdul3d.writeto(fitsfile3d)
     # # from RaJePy.plotting import functions as plotf
     # # plotf.model_plot(jm, show_plot=True)
     #
@@ -3230,5 +3283,6 @@ if __name__ == '__main__':
     #
     # print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")
     from RaJePy.plotting import functions as plotf
-    plotf.plot_geometry(jm, savefig="C:/Users/simon/Desktop/geometry_plot.pdf", show_plot=False)
+    plotf.plot_geometry(jm, savefig=os.sep.join([dcy, 'geometry_plot.pdf']),
+                        show_plot=False)
     # plotf.model_plot(jm, savefig="C:/Users/simon/Desktop/model_plot.pdf", show_plot=True)

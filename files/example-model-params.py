@@ -38,7 +38,7 @@ params = {
                    "q_x": 0.,  # Ionisation fraction index
                    "q^d_n": 0. / 8.,  # Cross-sectional density index
                    "q^d_T": 0.,  # Cross-sectional temperature index
-                   "q^d_v": 0.,  # Cross-sectional velocity index
+                   "q^d_v": 0.,  # Cross-sectional jet-velocity index
                    "q^d_x": 0.  # Cross-sectional ionisation fraction index
                    },
     "properties": {"v_0": 150.,  # Ejection velocity, km/s

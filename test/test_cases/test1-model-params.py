@@ -26,19 +26,19 @@ params = {
              "c_size": 0.5,  # Cell size (au)
              },
     "geometry": {"epsilon": 7. / 9.,  # Jet width index
-                 "opang": 35.,  # Jet opening angle (deg)
+                 "opang": 25.,  # Jet opening angle (deg)
                  "w_0": 1.,  # Half-width of jet base (au)
                  "r_0": 1.,  # Launching radius (au)
-                 "inc": 70.,  # Inclination angle (deg), 0 <= i <= 90
-                 "pa": 20.,  # Blue-jet position angle (deg), 60deg nominally
+                 "inc": 90.,  # Inclination angle (deg), 0 <= i <= 90
+                 "pa": 0.,  # Blue-jet position angle (deg), 60deg nominally
                  "rotation": "CCW",  # Rotation sense, one of CCW or CW
                  },
-    "power_laws": {"q_v": -0.5,  # Velocity index
+    "power_laws": {"q_v": 0.,  # Velocity index
                    "q_T": 0.,  # Temperature index
                    "q_x": 0.,  # Ionisation fraction index
-                   "q^d_n": -1. / 8.,  # Cross-sectional density index
+                   "q^d_n": 0.,  # Cross-sectional density index
                    "q^d_T": 0.,  # Cross-sectional temperature index
-                   "q^d_v": -0.5,  # Cross-sectional velocity index
+                   "q^d_v": 0.,  # Cross-sectional velocity index
                    "q^d_x": 0.  # Cross-sectional ionisation fraction index
                    },
     "properties": {"v_0": 150.,  # Ejection velocity (km/s)
