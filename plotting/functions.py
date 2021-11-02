@@ -383,6 +383,8 @@ def diagnostic_plot(jm: 'JetModel', show_plot: bool = False,
     -------
     None
     """
+    from RaJePy import _config as cfg
+
     inc = jm.params['geometry']['inc']
     pa = jm.params['geometry']['pa']
     if inc != 90. or pa != 0.:
@@ -675,10 +677,11 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
         cax.minorticks_on()
 
     if savefig:
-        # TODO: Put this in appropriate place in JetModel class
+        # TODO: Put this log entry in appropriate place in JetModel class
         # jm.log.add_entry("INFO",
         #                    "Model plot saved to " + savefig)
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
+        plt.close('all')
 
     if show_plot:
         plt.show()
@@ -855,16 +858,16 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
     return None
 
 
-def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
-                     show_plot: bool = False,
+def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
+                     ax: matplotlib.axes.Axes = None, show_plot: bool = False,
                      savefig: Union[bool, str] = False):
     """
     Plot ejection profile using matlplotlib5
 
     Parameters
     ----------
-    jm
-        JetModel instance from which to plot mass/volume slices.
+    inp
+        Pipeline or JetModel instance from which to plot jml(t)
     ax
         Axis to plot to, default is None in which case new axes/figure instances
         are created
@@ -879,15 +882,39 @@ def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
     -------
     None
     """
+    from RaJePy.classes import Pipeline, JetModel
     from RaJePy import cnsts
     from RaJePy import _config as cfg
 
-    # Plot out to 5 half-lives away from last existing burst in profile
+    if hasattr(inp, 'runs'):
+        jm = inp.model
+        run_years = list(set([_.year * con.year for _ in inp.runs]))
+    elif hasattr(inp, 'grid'):
+        jm = inp
+        run_years = []
+    else:
+        raise TypeError("arg 'inp' must be either a Pipeline or JetModel "
+                        f"instance, not {type(inp)}")
+
     t_0s = [jm.ejections[_]['t_0'] for _ in jm.ejections]
     hls = [jm.ejections[_]['half_life'] for _ in jm.ejections]
-    t_max = np.max(np.array(t_0s + 5 * np.array(hls)))
 
-    times = np.linspace(0, t_max, 1000)
+    if len(t_0s) > 0 and len(hls) > 0:
+        # Plot either 5 half-lives away from first/last existing burst, or from
+        # a year either side of the first/last model time specified (if Pipeline
+        # provided as arg, inp)
+        t_min = np.nanmin([min(run_years) - 1. if run_years else np.nan,
+                           np.nanmin(np.array(t_0s) - 5 * np.array(hls))])
+        t_max = np.nanmax([max(run_years) + 1. if run_years else np.nan,
+                           np.nanmax(np.array(t_0s) + 5 * np.array(hls))])
+    else:
+        if not run_years:
+            t_min, t_max = 0, 10
+        else:
+            t_min = np.nanmin([np.nanmin(run_years) - 1., 0.])
+            t_max = np.nanmax([np.nanmax(run_years) + 1., 10.])
+
+    times = np.linspace(t_min, t_max, 1000)
     jmls = jm.jml_t(times)
 
     if ax is None:
@@ -895,11 +922,19 @@ def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
                                               cfg.plots['dims']['column']))
 
     ax.plot(times / con.year, jmls * con.year / cnsts.MSOL, ls='-',
-            color='blue', lw=2, zorder=3, label=r'$\dot{m}_{\rm jet}$')
+            color='blue', lw=1, zorder=3, label=r'$\dot{m}_{\rm jet}$')
+
+    if np.ptp(np.log10(ax.get_ylim())) < 1:
+        ax.set_ylim(ax.get_ylim()[0],
+                    10 ** np.ceil(np.log10(ax.get_ylim()[0]) + 1.))
 
     ax.axhline(jm.ss_jml * con.year / 1.98847e30, 0, 1, ls=':',
-               color='red', lw=2, zorder=2,
+               color='red', lw=1, zorder=2,
                label=r'$\dot{m}_{\rm jet}^{\rm ss}$')
+
+    ax.axvline(run_years, *ax.get_xlim(), ls='-.',
+               color='grey', lw=1, zorder=1,
+               label=r'$t_\mathrm{runs}$')
 
     xunit = u.format.latex.Latex(times).to_string(u.year)
     yunit = u.format.latex.Latex(jmls).to_string(u.solMass * u.year ** -1)
@@ -909,6 +944,8 @@ def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
 
     ax.set_xlabel(r"$ t \," + xunit)
     ax.set_ylabel(r"$ \dot{m}_{\rm jet}\," + yunit)
+    ax.set_yscale('log')
+    ax.set_xlim(np.array([t_min, t_max]) / con.year)
 
     if savefig:
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
@@ -916,14 +953,13 @@ def jml_profile_plot(jm: 'JetModel', ax: matplotlib.axes.Axes = None,
     if show_plot:
         plt.show()
 
-    # return ax, times, jmls
-    return None
+    return fig, ax
 
 
-def plot_geometry(jm: 'JetModel', show_plot: bool = False,
+def geometry_plot(jm: 'JetModel', show_plot: bool = False,
                   savefig: Union[bool, str] = False):
     """
-    Plot ejection profile using matlplotlib5
+    Plot ejection profile using matlplotlib
 
     Parameters
     ----------
@@ -938,7 +974,8 @@ def plot_geometry(jm: 'JetModel', show_plot: bool = False,
 
     Returns
     -------
-    None
+    matplotlib.figure and matplotlib.AxesSubplot instances instantiated or drawn
+    upon
     """
     from RaJePy import _config as cfg
 
@@ -1036,17 +1073,147 @@ def plot_geometry(jm: 'JetModel', show_plot: bool = False,
     ax[0].set_xlim(-lim, lim)
     ax[0].set_ylim(-lim, lim)
 
-    # inc_rads = np.radians(jm.params["geometry"]["inc"])
-    # pa_rads = np.radians(jm.params["geometry"]["pa"])
-    # ax[0].plot((np.tan(np.pi / 2. - inc_rads) * np.nanmax(jm.zz),
-    #             -np.tan(np.pi / 2. - inc_rads) * np.nanmax(jm.zz)),
-    #            (-np.nanmax(jm.zz), np.nanmax(jm.zz)), color='b', ls='--', lw=.5)
-    # ax[1].plot((np.tan(pa_rads) * np.nanmax(jm.zz),
-    #             -np.tan(pa_rads) * np.nanmax(jm.zz)),
-    #            (-np.nanmax(jm.zz), np.nanmax(jm.zz)), color='b', ls='--', lw=.5)
-
     if savefig:
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
+        plt.close('all')
 
     if show_plot:
         plt.show()
+
+    return fig, ax
+
+
+def sed_plot(pline: 'Pipeline', plot_time: float,
+             plot_reynolds: bool = True,
+             savefig: bool = False) -> None:
+    import matplotlib.pylab as plt
+    from RaJePy.maths import physics as mphys
+    from RaJePy import _config as cfg
+
+    freqs, fluxes = [], []
+    freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
+    for idx, run in enumerate(pline.runs):
+        if run.year == plot_time:
+            if run.completed and run.obs_type == 'continuum':
+                # Skymodel fluxes
+                flux = run.results['flux']
+                fluxes.append(flux)
+                freqs.append(run.freq)
+
+                # imfit fluxes
+                if run.results['imfit'] is not None:
+                    flux_imfit = run.results['imfit']['I']['val']
+                    eflux_imfit = run.results['imfit']['Ierr']['val']
+                    fluxes_imfit.append(flux_imfit)
+                    efluxes_imfit.append(eflux_imfit)
+                    freqs_imfit.append(run.freq)
+
+    freqs = np.array(freqs)
+    fluxes = np.array(fluxes)
+
+    xlims = (10 ** (np.log10(np.min(freqs)) - 0.5),
+             10 ** (np.log10(np.max(freqs)) + 0.5))
+
+    alphas = []
+    for n in np.arange(1, len(fluxes)):
+        alphas.append(np.log10(fluxes[n] /
+                               fluxes[n - 1]) /
+                      np.log10(freqs[n] / freqs[n - 1]))
+
+    alphas_imfit, ealphas_imfit = [], []
+    for n in np.arange(1, len(fluxes_imfit)):
+        alphas_imfit.append(np.log10(fluxes_imfit[n] /
+                                     fluxes_imfit[n - 1]) /
+                            np.log10(freqs_imfit[n] / freqs_imfit[n - 1]))
+        c = np.log(freqs_imfit[n] / freqs_imfit[n - 1])
+        ealpha = np.sqrt((efluxes_imfit[n] / (fluxes_imfit[n] * c)) ** 2. +
+                         (efluxes_imfit[n - 1] / (
+                                 fluxes_imfit[n - 1] * c)) ** 2.)
+        ealphas_imfit.append(ealpha)
+
+    l_z = pline.model.nz * pline.model.csize / \
+          pline.model.params['target']['dist']
+
+    plt.close('all')
+
+    fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
+    ax2 = ax1.twinx()
+
+    # Alphas are calculated at the middle of two neighbouring frequencies
+    # in logarithmic space, hence the need for caclulation of freqs_a,
+    # the logarithmic mean of the two frequencies
+    freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
+               enumerate(freqs[:-1])]
+    freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for
+                     i, f in
+                     enumerate(freqs_imfit[:-1])]
+
+    ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
+             mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
+
+    ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
+                 ls='None', capsize=2)
+
+    freqs_r86 = np.logspace(np.log10(np.min(xlims)),
+                            np.log10(np.max(xlims)), 100)
+    flux_exp = []
+    for freq in freqs_r86:
+        f = mphys.flux_expected_r86(pline.model, freq, l_z * 0.5)
+        flux_exp.append(f * 2.)  # for biconical jet
+
+    alphas_r86 = []
+    for n in np.arange(1, len(freqs_r86)):
+        alphas_r86.append(np.log10(flux_exp[n] / flux_exp[n - 1]) /
+                          np.log10(freqs_r86[n] / freqs_r86[n - 1]))
+
+    # Alphas are calculated at the middle of two neighbouring frequencies
+    # in logarithmic space, hence the need for caclulation of freqs_a_r86
+    freqs_a_r86 = [10 ** np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f
+                   in
+                   enumerate(freqs_r86[:-1])]
+    if plot_reynolds:
+        ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--',
+                 lw=2, zorder=1)
+
+    ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
+               zorder=3, marker='o', markersize=5)
+    ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
+                 ls='None', capsize=2)
+
+    if plot_reynolds:
+        ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
+                   zorder=1)
+        ax1.loglog(freqs_r86,
+                   mphys.approx_flux_expected_r86(pline.model, freqs_r86) *
+                   2., color='gray', ls='-.', lw=2, zorder=1)
+    ax1.set_xlim(xlims)
+    ax2.set_ylim(-0.2, 2.1)
+    equalise_axes(ax1, fix_x=False)
+
+    ax1.set_xlabel(r'$\nu \, \left[ {\rm Hz} \right]$', color='k')
+    ax1.set_ylabel(r'$S_\nu \, \left[ {\rm Jy} \right]$', color='k')
+    ax2.set_ylabel(r'$\alpha$', color='b')
+
+    ax1.tick_params(which='both', direction='in', top=True)
+    ax2.tick_params(which='both', direction='in', color='b')
+    ax2.tick_params(axis='y', which='both', colors='b')
+    ax2.spines['right'].set_color('b')
+    ax2.yaxis.label.set_color('b')
+    ax2.minorticks_on()
+
+    title = "Radio SED plot at t={:.0f}yr for jet model '{}'"
+    title = title.format(plot_time, pline.model.params['target']['name'])
+
+    png_metadata = cfg.plots['metadata']['png']
+    png_metadata["Title"] = title
+
+    pdf_metadata = cfg.plots['metadata']['pdf']
+    pdf_metadata["Title"] = title
+
+    if savefig:
+        fig.savefig(savefig, bbox_inches='tight', metadata=png_metadata,
+                    dpi=300)
+        fig.savefig(savefig.replace('png', 'pdf'), bbox_inches='tight',
+                    metadata=pdf_metadata, dpi=300)
+    return None
+

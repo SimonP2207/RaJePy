@@ -1766,8 +1766,8 @@ class ContinuumRun:
         return self._dcy
 
     @dcy.setter
-    def dcy(self, new_dcy: str):
-        self._dcy = new_dcy
+    def dcy(self, path):
+        self._dcy = path
 
     @property
     def model_dcy(self) -> str:
@@ -2003,6 +2003,9 @@ class Pipeline:
         log
             logger.Log instance acting as a log. Default is None.
         """
+        import time
+
+        # Check validity of args
         if isinstance(jetmodel, JetModel):
             self.model = jetmodel
         else:
@@ -2010,6 +2013,9 @@ class Pipeline:
                             "not {}".format(type(jetmodel)))
 
         if isinstance(params, dict):
+            err = miscf.check_pline_params(params)
+            if err:
+                raise err
             self._params = params
         elif isinstance(params, str):
             self._params = Pipeline.py_to_dict(params)
@@ -2017,27 +2023,22 @@ class Pipeline:
             raise TypeError("Supplied arg params must be dict or full path ("
                             "str)")
 
-        self.model_dcy = self.params['dcys']['model_dcy']
-        self.model_file = self.model_dcy + os.sep + "jetmodel.save"
-        self.save_file = self.model_dcy + os.sep + "modelrun.save"
+        self.dcy = self.params['dcys']['model_dcy'].rstrip(os.sep)
+        self.model_file = self.dcy + os.sep + "jetmodel.save"
+        self.save_file = self.dcy + os.sep + "pipeline.save"
+        self.ptgfile = self.dcy + os.sep + 'pointings.ptg'
 
-        # Create Log for Pipeline instance
-        import time
-        log_name = "Pipeline_"
-        log_name += time.strftime("%Y%m%d%H-%M-%S", time.localtime())
-        log_name += ".log"
-
-        self._dcy = self.params['dcys']['model_dcy']
-
+        # Create working directory and log
+        log_name = "Pipeline_{}.log".format(time.strftime("%Y%m%d%H-%M-%S",
+                                                          time.localtime()))
         if not os.path.exists(self.dcy):
             os.mkdir(self.dcy)
-            fn = os.sep.join([self.dcy, log_name])
             if log is not None:
                 self._log = log
             else:
-                self._log = logger.Log(fname=fn)
+                self._log = logger.Log(fname=os.sep.join([self.dcy, log_name]))
             self.log.add_entry(mtype="INFO",
-                               entry="Creating model directory, " + self.dcy)
+                               entry=f"Creating pipeline directory, {self.dcy}")
         else:
             if log is not None:
                 self._log = log
@@ -2053,6 +2054,7 @@ class Pipeline:
                                               delete_old_logs=True)
             self.log = self.model.log = new_log
 
+        # Sort Continuum/RRL runs into time order
         if self.params['continuum']['times'] is not None:
             self.params['continuum']['times'].sort()
         else:
@@ -2063,6 +2065,7 @@ class Pipeline:
         else:
             self.params['rrls']['times'] = np.array([])
 
+        # Determine continuum and RRL RT/SO runs to be conducted
         runs = []
 
         # Determine continuum run parameters
@@ -2073,7 +2076,7 @@ class Pipeline:
         bws = self.params['continuum']['bws']
         chanws = self.params['continuum']['chanws']
         self.log.add_entry(mtype="INFO",
-                           entry="Reading in continuum runs to pipeline")
+                           entry="Reading continuum runs into pipeline")
         idx1, idx2 = None, None
         for idx1, time in enumerate(self.params['continuum']['times']):
             for idx2, freq in enumerate(self.params['continuum']['freqs']):
@@ -2096,7 +2099,7 @@ class Pipeline:
         bws = self.params['rrls']['bws']
         chanws = self.params['rrls']['chanws']
         self.log.add_entry(mtype="INFO",
-                           entry="Reading in radio recombination line runs to "
+                           entry="Reading radio recombination line runs into "
                                  "pipeline")
         idx1, idx2 = None, None
         for idx1, time in enumerate(self.params['rrls']['times']):
@@ -2203,6 +2206,10 @@ class Pipeline:
     def dcy(self):
         return self._dcy
 
+    @dcy.setter
+    def dcy(self, path):
+        self._dcy = path
+
     @property
     def model(self):
         return self._model
@@ -2267,28 +2274,34 @@ class Pipeline:
                          self.model.params['target']['dec'],
                          unit=(u.hourangle, u.degree), frame='fk5')
 
-        ptgfile = self.model_dcy + os.sep + 'pointings.ptg'
         if simobserve:
             # Make pointing file
             ptg_txt = "#Epoch     RA          DEC      TIME(optional)\n"
-            ptg_txt += "J2000 {} ".format(tgt_c.to_string('hmsdms'))
+            ptg_txt += f"J2000 {tgt_c.to_string('hmsdms')} "
 
             self.log.add_entry("INFO",
-                               "Creating pointings and writing to file, {}, "
-                               "for synthetic observations".format(ptgfile))
-            with open(ptgfile, 'wt') as f:
+                               "Creating pointings and writing to file, "
+                               f"{self.ptgfile}, for synthetic observations")
+            with open(self.ptgfile, 'wt') as f:
                 f.write(ptg_txt)
 
         if resume:
             if os.path.exists(self.model_file):
                 self.model = JetModel.load_model(self.model_file)
 
+        pfunc.geometry_plot(self.model, show_plot=False,
+                            savefig=os.sep.join([self.dcy,
+                                                 'GridPlot.pdf']))
+
+        pfunc.jml_profile_plot(self, show_plot=False,
+                               savefig=os.sep.join([self.dcy, 'JMLPlot.pdf']))
+
         for idx, run in enumerate(self.runs):
             self.model.time = run.year * con.year
             self.log.add_entry(mtype="INFO",
                                entry="Executing run #{} -> Details:\n{}"
                                      "".format(idx + 1, run.__str__()))
-            if run.completed and not clobber:
+            if run.completed and resume and not clobber:
                 self.log.add_entry(mtype="INFO",
                                    entry="Run #{} previously completed, "
                                          "skipping".format(idx + 1, ),
@@ -2307,12 +2320,15 @@ class Pipeline:
                 # Plot physical jet model, if required
                 model_plotfile = os.sep.join([os.path.dirname(run.rt_dcy),
                                               "ModelPlot.pdf"])
+                if not os.path.exists(model_plotfile) or clobber:
+                    pfunc.model_plot(self.model, savefig=model_plotfile,
+                                     show_plot=False)
 
                 if not dryrun and run.radiative_transfer:
                     self.log.add_entry(mtype="INFO",
-                                       entry="Running radiative transfer")
-                    if not os.path.exists(model_plotfile) or clobber:
-                        pfunc.model_plot(self.model, savefig=model_plotfile)
+                                       entry="Conducting radiative transfer at "
+                                             f"{run.freq / 1e9:.1f}GHz for a "
+                                             f"model time of {run.year:.1f}yr")
 
                     # Compute Emission measures for model plots
                     if not os.path.exists(run.fits_em) or clobber:
@@ -2346,13 +2362,12 @@ class Pipeline:
                                                      f"saving to {run.fits_flux}")
                             fluxes = self.model.flux_ff(run.chan_freqs,
                                                         savefits=run.fits_flux)
-                            # fluxes = fluxes.T
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already "
                                                      f"exist -> {run.fits_flux}",
                                                timestamp=False)
-                            fluxes = fits.open(run.fits_flux)[0].data[0]
+                            fluxes = fits.open(run.fits_flux)[0].data
                     else:
                         if not os.path.exists(run.fits_tau) or clobber:
                             self.log.add_entry(mtype="INFO",
@@ -2374,20 +2389,23 @@ class Pipeline:
                                                          run.chan_freqs,
                                                          contsub=False,
                                                          savefits=run.fits_flux)
-                            # fluxes = fluxes.T
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already "
                                                      f"exist -> {run.fits_flux}",
                                                timestamp=False)
-                            fluxes = fits.open(run.fits_flux)[0].data[0]
+                            fluxes = fits.open(run.fits_flux)[0].data
 
                     if run.obs_type == 'continuum':
+                        # For continuum, flux calculated as average sum flux of
+                        # each channel
                         flux = np.nansum(np.nanmean(fluxes, axis=0))
                         self.log.add_entry(mtype="INFO",
                                            entry="Total, average, channel flux "
                                                  f"of {flux:.2e}Jy calculated")
                     else:
+                        # For RRL, flux calculated per channel and given as list
+                        # of length equal to the number of frequency channels
                         flux = np.nansum(np.nansum(fluxes, axis=1), axis=1)
                     self.runs[idx].results['flux'] = flux
 
@@ -2400,8 +2418,7 @@ class Pipeline:
 
             except KeyboardInterrupt:
                 self.log.add_entry("ERROR",
-                                   "Pipeline interrupted by user. Saving run "
-                                   "state")
+                                   "Pipeline interrupted by user, saving state")
                 self.save(self.save_file)
                 self.model.save(self.model_file)
                 raise KeyboardInterrupt("Pipeline interrupted by user")
@@ -2516,7 +2533,7 @@ class Pipeline:
                                           incenter=freq_str,
                                           inwidth=chanw_str,
                                           setpointings=False,
-                                          ptgfile=ptgfile,
+                                          ptgfile=self.ptgfile,
                                           integration=str(run.t_int) + 's',
                                           antennalist=ant_list,
                                           refdate=refdates[idx2],
@@ -2774,213 +2791,162 @@ class Pipeline:
 
         if not dryrun and simobserve:
             for year in self.params["continuum"]['times']:
-                self.plot_continuum_fluxes(year, savefig=True)
+                save_file = os.sep.join([self.dcy,
+                                         f'RadioSED{year:.1f}yrPlot.png'])
+                self.log.add_entry("INFO",
+                                   "Saving radio SED figure to "
+                                   f"{save_file.replace('png', '(png,pdf)')} "
+                                   f"for time {year}yr")
+                pfunc.sed_plot(self, year, savefig=save_file)
 
         self.save(self.save_file)
         self.model.save(self.model_file)
 
         return None  # self.runs[idx]['products']
 
-    # TODO: Move this to RaJePy.plotting.functions
-    def plot_continuum_fluxes(self, plot_time: float,
-                              plot_reynolds: bool = True,
-                              savefig: bool = False) -> None:
-        import matplotlib.pylab as plt
-        freqs, fluxes = [], []
-        freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
-        for idx, run in enumerate(self.runs):
-            if run.year == plot_time:
-                if run.completed and run.obs_type == 'continuum':
-                    # Skymodel fluxes
-                    flux = run.results['flux']
-                    fluxes.append(flux)
-                    freqs.append(run.freq)
-
-                    # imfit fluxes
-                    if run.results['imfit'] is not None:
-                        flux_imfit = run.results['imfit']['I']['val']
-                        eflux_imfit = run.results['imfit']['Ierr']['val']
-                        fluxes_imfit.append(flux_imfit)
-                        efluxes_imfit.append(eflux_imfit)
-                        freqs_imfit.append(run.freq)
-
-        freqs = np.array(freqs)
-        fluxes = np.array(fluxes)
-
-        xlims = (10 ** (np.log10(np.min(freqs)) - 0.5),
-                 10 ** (np.log10(np.max(freqs)) + 0.5))
-
-        alphas = []
-        for n in np.arange(1, len(fluxes)):
-            alphas.append(np.log10(fluxes[n] /
-                                   fluxes[n - 1]) /
-                          np.log10(freqs[n] / freqs[n - 1]))
-
-        alphas_imfit, ealphas_imfit = [], []
-        for n in np.arange(1, len(fluxes_imfit)):
-            alphas_imfit.append(np.log10(fluxes_imfit[n] /
-                                         fluxes_imfit[n - 1]) /
-                                np.log10(freqs_imfit[n] / freqs_imfit[n - 1]))
-            c = np.log(freqs_imfit[n] / freqs_imfit[n - 1])
-            ealpha = np.sqrt((efluxes_imfit[n] / (fluxes_imfit[n] * c)) ** 2. +
-                             (efluxes_imfit[n - 1] / (
-                                     fluxes_imfit[n - 1] * c)) ** 2.)
-            ealphas_imfit.append(ealpha)
-
-        l_z = self.model.nz * self.model.csize / \
-              self.model.params['target']['dist']
-
-        plt.close('all')
-
-        fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
-        ax2 = ax1.twinx()
-
-        # Alphas are calculated at the middle of two neighbouring frequencies
-        # in logarithmic space, hence the need for caclulation of freqs_a,
-        # the logarithmic mean of the two frequencies
-        freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
-                   enumerate(freqs[:-1])]
-        freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for
-                         i, f in
-                         enumerate(freqs_imfit[:-1])]
-
-        ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
-                 mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
-
-        ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
-                     ls='None', capsize=2)
-
-        freqs_r86 = np.logspace(np.log10(np.min(xlims)),
-                                np.log10(np.max(xlims)), 100)
-        flux_exp = []
-        for freq in freqs_r86:
-            f = mphys.flux_expected_r86(self.model, freq, l_z * 0.5)
-            flux_exp.append(f * 2.)  # for biconical jet
-
-        alphas_r86 = []
-        for n in np.arange(1, len(freqs_r86)):
-            alphas_r86.append(np.log10(flux_exp[n] / flux_exp[n - 1]) /
-                              np.log10(freqs_r86[n] / freqs_r86[n - 1]))
-
-        # Alphas are calculated at the middle of two neighbouring frequencies
-        # in logarithmic space, hence the need for caclulation of freqs_a_r86
-        freqs_a_r86 = [10 ** np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f
-                       in
-                       enumerate(freqs_r86[:-1])]
-        if plot_reynolds:
-            ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--',
-                     lw=2, zorder=1)
-
-        ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
-                   zorder=3, marker='o', markersize=5)
-        ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
-                     ls='None', capsize=2)
-
-        if plot_reynolds:
-            ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
-                       zorder=1)
-            ax1.loglog(freqs_r86,
-                       mphys.approx_flux_expected_r86(self.model, freqs_r86) *
-                       2., color='gray', ls='-.', lw=2, zorder=1)
-        ax1.set_xlim(xlims)
-        ax2.set_ylim(-0.2, 2.1)
-        pfunc.equalise_axes(ax1, fix_x=False)
-
-        ax1.set_xlabel(r'$\nu \, \left[ {\rm Hz} \right]$', color='k')
-        ax1.set_ylabel(r'$S_\nu \, \left[ {\rm Jy} \right]$', color='k')
-        ax2.set_ylabel(r'$\alpha$', color='b')
-
-        ax1.tick_params(which='both', direction='in', top=True)
-        ax2.tick_params(which='both', direction='in', color='b')
-        ax2.tick_params(axis='y', which='both', colors='b')
-        ax2.spines['right'].set_color('b')
-        ax2.yaxis.label.set_color('b')
-        ax2.minorticks_on()
-
-        save_file = '_'.join(
-            ["Jet", "lz" + str(self.model.params["grid"]["l_z"]),
-             "csize" + str(self.model.params["grid"]["c_size"])])
-        save_file += '.png'
-        save_file = os.sep.join([self.dcy,
-                                 'Day{}'.format(int(plot_time * 365.)),
-                                 save_file])
-
-        title = "Radio SED plot at t={:.0f}yr for jet model '{}'"
-        title = title.format(plot_time, self.model.params['target']['name'])
-
-        png_metadata = cfg.plots['metadata']['png']
-        png_metadata["Title"] = title
-
-        pdf_metadata = cfg.plots['metadata']['pdf']
-        pdf_metadata["Title"] = title
-
-        if savefig:
-            self.log.add_entry("INFO",
-                               "Saving radio SED figure to {} for time {}yr"
-                               "".format(save_file.replace('png', '(png,pdf)'),
-                                         plot_time))
-            fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata,
-                        dpi=300)
-            fig.savefig(save_file.replace('png', 'pdf'), bbox_inches='tight',
-                        metadata=pdf_metadata, dpi=300)
-        return None
-
-    # def jml_profile_plot(self, ax=None, savefig: Union[bool, str] = False):
-    #     """
-    #     Plot ejection profile using matlplotlib and overplot pipeline's
-    #     observational epochs
+    # # TODO: Move this to RaJePy.plotting.functions
+    # def plot_continuum_fluxes(self, plot_time: float,
+    #                           plot_reynolds: bool = True,
+    #                           savefig: bool = False) -> None:
+    #     import matplotlib.pylab as plt
+    #     freqs, fluxes = [], []
+    #     freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
+    #     for idx, run in enumerate(self.runs):
+    #         if run.year == plot_time:
+    #             if run.completed and run.obs_type == 'continuum':
+    #                 # Skymodel fluxes
+    #                 flux = run.results['flux']
+    #                 fluxes.append(flux)
+    #                 freqs.append(run.freq)
     #
-    #     Parameters
-    #     ----------
-    #     ax : matplotlib.axes._axes.Axes
-    #         Axis to plot to
+    #                 # imfit fluxes
+    #                 if run.results['imfit'] is not None:
+    #                     flux_imfit = run.results['imfit']['I']['val']
+    #                     eflux_imfit = run.results['imfit']['Ierr']['val']
+    #                     fluxes_imfit.append(flux_imfit)
+    #                     efluxes_imfit.append(eflux_imfit)
+    #                     freqs_imfit.append(run.freq)
     #
-    #     savefig: bool, str
-    #         Whether to save the radio plot to file. If False, will not, but if
-    #         a str representing a valid path will save to that path.
+    #     freqs = np.array(freqs)
+    #     fluxes = np.array(fluxes)
     #
-    #     Returns
-    #     -------
-    #     numpy.array giving mass loss rates
+    #     xlims = (10 ** (np.log10(np.min(freqs)) - 0.5),
+    #              10 ** (np.log10(np.max(freqs)) + 0.5))
     #
-    #     """
-    #     t_cont = self.params['continuum']['times']
-    #     t_rrl = self.params['rrls']['times']
+    #     alphas = []
+    #     for n in np.arange(1, len(fluxes)):
+    #         alphas.append(np.log10(fluxes[n] /
+    #                                fluxes[n - 1]) /
+    #                       np.log10(freqs[n] / freqs[n - 1]))
     #
-    #     ts = set(np.append(t_rrl, t_cont))
-    #     jmls = [self.model.jml_t(t * con.year) * 1.58552e-23 for t in ts]
+    #     alphas_imfit, ealphas_imfit = [], []
+    #     for n in np.arange(1, len(fluxes_imfit)):
+    #         alphas_imfit.append(np.log10(fluxes_imfit[n] /
+    #                                      fluxes_imfit[n - 1]) /
+    #                             np.log10(freqs_imfit[n] / freqs_imfit[n - 1]))
+    #         c = np.log(freqs_imfit[n] / freqs_imfit[n - 1])
+    #         ealpha = np.sqrt((efluxes_imfit[n] / (fluxes_imfit[n] * c)) ** 2. +
+    #                          (efluxes_imfit[n - 1] / (
+    #                                  fluxes_imfit[n - 1] * c)) ** 2.)
+    #         ealphas_imfit.append(ealpha)
     #
-    #     if ax is None:
-    #         fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
-    #                                               cfg.plots['dims']['column']))
+    #     l_z = self.model.nz * self.model.csize / \
+    #           self.model.params['target']['dist']
     #
-    #     _, times, __ = pfunc.jml_profile_plot(self.model, ax=ax)
+    #     plt.close('all')
     #
-    #     xlims = 0, np.nanmax(times / con.year)
-    #     ax.set_yscale('log')
+    #     fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
+    #     ax2 = ax1.twinx()
     #
-    #     ylims = (10 ** np.floor(np.log10(np.nanmin(jmls))),
-    #              10 ** np.ceil(np.log10(np.nanmax(jmls))))
+    #     # Alphas are calculated at the middle of two neighbouring frequencies
+    #     # in logarithmic space, hence the need for caclulation of freqs_a,
+    #     # the logarithmic mean of the two frequencies
+    #     freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
+    #                enumerate(freqs[:-1])]
+    #     freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for
+    #                      i, f in
+    #                      enumerate(freqs_imfit[:-1])]
     #
-    #     # Plot continuum-only time as down-marker, rrl-only time as up-marker
-    #     # and both as full line
-    #     for i, t in enumerate(ts):
-    #         ax.plot([t, t], [jmls[i], ylims[0]], ls='-', lw=.5,
-    #                 color='cornflowerblue', zorder=1,
-    #                 label=r'$t_{\rm obs}$' if i == 0 else None)
+    #     ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
+    #              mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
     #
-    #     ax.set_xlim(*xlims)
-    #     ax.set_ylim(*ylims)
+    #     ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
+    #                  ls='None', capsize=2)
     #
-    #     ax.legend(loc=1)
-    #     ax.minorticks_on()
-    #     ax.tick_params(which='both', axis='both', direction='in',
-    #                    bottom=True, top=True, left=True, right=True)
+    #     freqs_r86 = np.logspace(np.log10(np.min(xlims)),
+    #                             np.log10(np.max(xlims)), 100)
+    #     flux_exp = []
+    #     for freq in freqs_r86:
+    #         f = mphys.flux_expected_r86(self.model, freq, l_z * 0.5)
+    #         flux_exp.append(f * 2.)  # for biconical jet
+    #
+    #     alphas_r86 = []
+    #     for n in np.arange(1, len(freqs_r86)):
+    #         alphas_r86.append(np.log10(flux_exp[n] / flux_exp[n - 1]) /
+    #                           np.log10(freqs_r86[n] / freqs_r86[n - 1]))
+    #
+    #     # Alphas are calculated at the middle of two neighbouring frequencies
+    #     # in logarithmic space, hence the need for caclulation of freqs_a_r86
+    #     freqs_a_r86 = [10 ** np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f
+    #                    in
+    #                    enumerate(freqs_r86[:-1])]
+    #     if plot_reynolds:
+    #         ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--',
+    #                  lw=2, zorder=1)
+    #
+    #     ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
+    #                zorder=3, marker='o', markersize=5)
+    #     ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
+    #                  ls='None', capsize=2)
+    #
+    #     if plot_reynolds:
+    #         ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
+    #                    zorder=1)
+    #         ax1.loglog(freqs_r86,
+    #                    mphys.approx_flux_expected_r86(self.model, freqs_r86) *
+    #                    2., color='gray', ls='-.', lw=2, zorder=1)
+    #     ax1.set_xlim(xlims)
+    #     ax2.set_ylim(-0.2, 2.1)
+    #     pfunc.equalise_axes(ax1, fix_x=False)
+    #
+    #     ax1.set_xlabel(r'$\nu \, \left[ {\rm Hz} \right]$', color='k')
+    #     ax1.set_ylabel(r'$S_\nu \, \left[ {\rm Jy} \right]$', color='k')
+    #     ax2.set_ylabel(r'$\alpha$', color='b')
+    #
+    #     ax1.tick_params(which='both', direction='in', top=True)
+    #     ax2.tick_params(which='both', direction='in', color='b')
+    #     ax2.tick_params(axis='y', which='both', colors='b')
+    #     ax2.spines['right'].set_color('b')
+    #     ax2.yaxis.label.set_color('b')
+    #     ax2.minorticks_on()
+    #
+    #     save_file = '_'.join(
+    #         ["Jet", "lz" + str(self.model.params["grid"]["l_z"]),
+    #          "csize" + str(self.model.params["grid"]["c_size"])])
+    #     save_file += '.png'
+    #     save_file = os.sep.join([self.dcy,
+    #                              'Day{}'.format(int(plot_time * 365.)),
+    #                              save_file])
+    #
+    #     title = "Radio SED plot at t={:.0f}yr for jet model '{}'"
+    #     title = title.format(plot_time, self.model.params['target']['name'])
+    #
+    #     png_metadata = cfg.plots['metadata']['png']
+    #     png_metadata["Title"] = title
+    #
+    #     pdf_metadata = cfg.plots['metadata']['pdf']
+    #     pdf_metadata["Title"] = title
     #
     #     if savefig:
-    #         plt.savefig(savefig, bbox_inches='tight', dpi=300)
-    #
-    #     return ax
+    #         self.log.add_entry("INFO",
+    #                            "Saving radio SED figure to {} for time {}yr"
+    #                            "".format(save_file.replace('png', '(png,pdf)'),
+    #                                      plot_time))
+    #         fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata,
+    #                     dpi=300)
+    #         fig.savefig(save_file.replace('png', 'pdf'), bbox_inches='tight',
+    #                     metadata=pdf_metadata, dpi=300)
+    #     return None
 
     # TODO: Move this to RaJePy.plotting.functions
     def radio_plot(self, run: Union[ContinuumRun, RRLRun],
@@ -3209,22 +3175,24 @@ class Pointing(object):
 
 
 if __name__ == '__main__':
-
-
-
-
     # import matplotlib.cm
     # import matplotlib.pylab as plt
-    #
+    from RaJePy.plotting import functions as plotf
+
     param_dcy = os.sep.join([os.path.dirname(__file__), 'test', 'test_cases'])
     jm = JetModel(os.sep.join([param_dcy, 'test1-model-params.py']))
     pl = Pipeline(jm, os.sep.join([param_dcy, 'test1-pipeline-params.py']))
+    dcy = os.path.expanduser('~')
+    # pl.execute(simobserve=False, resume=False)
+    # plotf.plot_geometry(jm, savefig=os.sep.join([dcy, 'Desktop', 'geometry_plot.pdf']),
+    #                     show_plot=False)
+    # plotf.model_plot(jm, savefig=os.sep.join([dcy, 'Desktop', 'model_plot.pdf']),
+    #                  show_plot=False)
 
     # ns = miscf.reorder_axes(jm.number_density, 0, 2, 1, None, 'y', None)
     # hdu3d = fits.PrimaryHDU(ns)
     # hdul3d = fits.HDUList([hdu3d])
-    dcy = os.path.expanduser('~')
-    fitsfile3d = os.sep.join([dcy, 'ns3d.fits'])
+    # fitsfile3d = os.sep.join([dcy, 'ns3d.fits'])
     # if os.path.exists(fitsfile3d):
     #     os.remove(fitsfile3d)
     # hdul3d.writeto(fitsfile3d)
@@ -3282,7 +3250,4 @@ if __name__ == '__main__':
     #
     #
     # print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")
-    from RaJePy.plotting import functions as plotf
-    plotf.plot_geometry(jm, savefig=os.sep.join([dcy, 'geometry_plot.pdf']),
-                        show_plot=False)
-    # plotf.model_plot(jm, savefig="C:/Users/simon/Desktop/model_plot.pdf", show_plot=True)
+

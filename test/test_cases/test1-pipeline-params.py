@@ -31,5 +31,5 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
                         'tscps':  np.array([('VLA', 'A')]),  # (tscop, config)
                         't_ints': np.array([60]),  # secs
                         'bws':    np.array([1e8]),  # Hz
-                        'chanws': np.array([1e5])},  # Hz
+                        'chanws': np.array([1e6])},  # Hz
           }

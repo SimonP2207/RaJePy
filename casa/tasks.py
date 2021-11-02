@@ -13,30 +13,24 @@ class _CasaTask(object):
     """
     Parent class to handle CASA tasks
     """
+    _DEFAULTS = {}
+    _NAME = ''
 
-    def __init__(self, taskname, taskparameters, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         """
 
         Parameters
         ----------
-        taskname : str
-            Name of the task e.g. 'tclean'
-        taskparameters : dict
-            Dictionary containing task's parameter names as keys whose values
-            are the 2-tuples of the data type expected of that parameter and
-            its default value e.g.:
-                taskparameters = {'imagename': (str, ''),
-                                  'flux': (float, 0.0),
-                                  'index': (int, 0),
-                              s    ...}
         **kwargs : passed down to the set_val method. Kwarg keys should be valid
             parameter names for the casa task with their values being the valid
             type for that parameter.
         """
         # Check correct data types in tasks' supplied parameters
         task_params, exp_params = {}, {}
-        for key in taskparameters:
-            p = taskparameters[key]
+        # for key in taskparameters:
+        #    p = taskparameters[key]
+        for key in self._DEFAULTS:
+            p = self._DEFAULTS[key]
 
             if type(key) not in (int, str):
                 raise TypeError('Expected parameters\' keys must be str or int '
@@ -60,7 +54,8 @@ class _CasaTask(object):
             task_params[key] = p[1]
             exp_params[key] = p[0]
 
-        self._taskname = taskname
+        # self._taskname = taskname
+        self._taskname = self._NAME
         self._params = task_params
         self._param_types = exp_params
         self._imports = []
@@ -101,7 +96,12 @@ class _CasaTask(object):
             simobserve(project='example_project', skymodel='eg_model', ...)
 
         """
+
         def separator(a_list):
+            """
+            Function to separate positional args (ints) from kwargs (strs) and
+            reorder with integer args first
+            """
             ints, strs = [], []
             for element in a_list:
                 if type(element) is int:
@@ -118,17 +118,18 @@ class _CasaTask(object):
         keys = separator(keys)
 
         for idx, key in enumerate(keys):
+            # Do not show if value is equal to the default value
+            if self.params[key] == self._DEFAULTS[key][1]:
+                continue
             if type(key) is str:
                 s += key + '='
             if self.param_types[key] is str:
                 s += '\"{0}\"'.format(self.params[key])
             else:
                 s += '{0}'.format(str(self.params[key]))
-            if idx + 1 != len(self.params.keys()):
-                s += ', '
+            s += ', '
 
-        s += ')'
-        return s
+        return s.rstrip(', ') + ')'
 
     @property
     def param_types(self):
@@ -177,139 +178,143 @@ class Simobserve(_CasaTask):
     Task to handle generation of synthetic measurement sets from a `true'
     model (image)
     """
+    _NAME = 'simobserve'
+    _DEFAULTS = {'project': (str, ''),
+                 'skymodel': (str, ''),
+                 'incenter': (str, ''),
+                 'inwidth': (str, ''),
+                 'complist': (str, ''),
+                 'setpointings': (bool, False),
+                 'ptgfile': (str, ''),
+                 'integration': (str, '5s'),
+                 'direction': (str, ''),
+                 'mapsize': (list, ['', '']),
+                 'maptype': (str, 'ALMA'),
+                 'pointingspacing': (str, ''),
+                 'obsmode': (str, 'int'),  # Only 'int' (interferometer) here!
+                 'antennalist': (str, ''),  # FULL path to antenna config file
+                 'refdate': (str, ''),
+                 'hourangle': (str, 'transit'),
+                 'totaltime': (str, ''),  # e.g. '7200s'
+                 'caldirection': (str, ''),
+                 'calflux': (str, '1Jy'),
+                 'outframe': (str, 'LSRK'),
+                 'thermalnoise': (str, 'tsys-atm'),
+                 'user_pwv': (float, 1.0),
+                 't_ground': (float, 269.0),
+                 'seed': (int, np.random.randint(1e6, dtype=int)),
+                 'leakage': (float, 0.0),
+                 'graphics': (str, 'none'),
+                 'verbose': (bool, True),
+                 'overwrite': (bool, False)}
 
     def __init__(self, **kwargs):
-        ps = {'project': (str, ''),
-              'skymodel': (str, ''),
-              'incenter': (str, ''),
-              'inwidth': (str, ''),
-              'complist': (str, ''),
-              'setpointings': (bool, False),
-              'ptgfile': (str, ''),
-              'integration': (str, '5s'),
-              'direction': (str, ''),
-              'mapsize': (list, ['', '']),
-              'maptype': (str, 'ALMA'),
-              'pointingspacing': (str, ''),
-              'obsmode': (str, 'int'),  # Only 'int' (interferometer) here!
-              'antennalist': (str, ''),  # FULL path to antenna config file
-              'refdate': (str, ''),
-              'hourangle': (str, 'transit'),
-              'totaltime': (str, ''),  # e.g. '7200s'
-              'caldirection': (str, ''),
-              'calflux': (str, '1Jy'),
-              'outframe': (str, 'LSRK'),
-              'thermalnoise': (str, 'tsys-atm'),
-              'user_pwv': (float, 1.0),
-              't_ground': (float, 269.0),
-              'seed': (int, np.random.randint(1e6, dtype=int)),
-              'leakage': (float, 0.0),
-              'graphics': (str, 'none'),
-              'verbose': (bool, True),
-              'overwrite': (bool, False)}
-        super().__init__('simobserve', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Tclean(_CasaTask):
     """
     Task to handle imaging and deconvolution of a measurement set's visibilities
     """
+    _DEFAULTS = {'vis': (str, ''),
+                 'selectdata': (bool, False),
+                 'field': (str, ''),
+                 'spw': (str, ''),
+                 'timerange': (str, ''),
+                 'uvrange': (str, ''),
+                 'antenna': (str, ''),
+                 'scan': (str, ''),
+                 'observation': (str, ''),
+                 'intent': (str, ''),
+                 'datacolumn': (str, 'data'),
+                 'imagename': (str, ''),
+                 'imsize': (list, [100, 100]),
+                 'cell': (list, ['0.1arcsec']),
+                 'phasecenter': (str, ''),
+                 'stokes': (str, 'I'),
+                 'projection': (str, 'TAN'),
+                 'startmodel': (str, ''),
+                 'specmode': (str, 'mfs'),
+                 'restfreq': (list, ['']),
+                 'reffreq': (str, ''),
+                 'gridder': (str, 'standard'),
+                 'vptable': (str, ''),
+                 'pblimit': (float, 0.2),
+                 'deconvolver': (str, 'clark'),
+                 'scales': (list, []),
+                 'smallscalebias': (float, 0.0),
+                 'nterms': (int, 1),
+                 'restoration': (bool, True),
+                 'restoringbeam': (list, []),
+                 'pbcor': (bool, False),
+                 'outlierfile': (str, ''),
+                 'weighting': (str, 'briggs'),
+                 'robust': (float, 0.5),
+                 'npixels': (int, 0),
+                 'uvtaper': (list, []),
+                 'niter': (int, 1000),
+                 'gain': (float, 0.1),
+                 'threshold': (float, 0.0),
+                 'nsigma': (float, 3.0),
+                 'cycleniter': (int, -1),
+                 'cyclefactor': (float, 1.0),
+                 'minpsffraction': (float, 0.05),
+                 'maxpsffraction': (float, 0.8),
+                 'interactive': (bool, False),
+                 'usemask': (str, 'user'),
+                 'mask': (str, ''),
+                 'pbmask': (float, 0.0),
+                 # 'fastnoise': (bool, True),
+                 'restart': (bool, False),
+                 'savemodel': (str, 'none'),
+                 'calcres': (bool, True),
+                 'calcpsf': (bool, True),
+                 'parallel': (bool, False)}
+    _NAME = 'tclean'
 
     def __init__(self, **kwargs):
-        ps = {'vis': (str, ''),
-              'selectdata': (bool, False),
-              'field': (str, ''),
-              'spw': (str, ''),
-              'timerange': (str, ''),
-              'uvrange': (str, ''),
-              'antenna': (str, ''),
-              'scan': (str, ''),
-              'observation': (str, ''),
-              'intent': (str, ''),
-              'datacolumn': (str, 'data'),
-              'imagename': (str, ''),
-              'imsize': (list, [500, 500]),
-              'cell': (list, ['0.1arcsec']),
-              'phasecenter': (str, ''),
-              'stokes': (str, 'I'),
-              'projection': (str, 'TAN'),
-              'startmodel': (str, ''),
-              'specmode': (str, 'mfs'),
-              'restfreq': (list, ['']),
-              'reffreq': (str, ''),
-              'gridder': (str, 'standard'),
-              'vptable': (str, ''),
-              'pblimit': (float, 0.2),
-              'deconvolver': (str, 'clark'),
-              'scales': (list, []),
-              'smallscalebias': (float, 0.0),
-              'nterms': (int, 1),
-              'restoration': (bool, True),
-              'restoringbeam': (list, []),
-              'pbcor': (bool, False),
-              'outlierfile': (str, ''),
-              'weighting': (str, 'briggs'),
-              'robust': (float, 0.5),
-              'npixels': (int, 0),
-              'uvtaper': (list, []),
-              'niter': (int, 1000),
-              'gain': (float, 0.1),
-              'threshold': (float, 0.0),
-              'nsigma': (float, 3.0),
-              'cycleniter': (int, -1),
-              'cyclefactor': (float, 1.0),
-              'minpsffraction': (float, 0.05),
-              'maxpsffraction': (float, 0.8),
-              'interactive': (bool, False),
-              'usemask': (str, 'user'),
-              'mask': (str, ''),
-              'pbmask': (float, 0.0),
-#              'fastnoise': (bool, True),
-              'restart': (bool, False),
-              'savemodel': (str, 'none'),
-              'calcres': (bool, True),
-              'calcpsf': (bool, True),
-              'parallel': (bool, False)}
-        super().__init__('tclean', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Exportfits(_CasaTask):
     """
     Task to handle conversion of a CASA image to a FITS file
     """
+    _DEFAULTS = {'imagename': (str, ''),
+                 'fitsimage': (str, ''),
+                 'velocity': (bool, False),
+                 'optical': (bool, False),
+                 'bitpix': (int, -32),
+                 'minpix': (int, 0),
+                 'maxpix': (int, -1),
+                 'overwrite': (bool, False),
+                 'dropstokes': (bool, False),
+                 'stokeslast': (bool, True),
+                 'history': (bool, True),
+                 'dropdeg': (bool, False)}
+    _NAME = 'exportfits'
 
     def __init__(self, **kwargs):
-        ps = {'imagename': (str, ''),
-              'fitsimage': (str, ''),
-              'velocity': (bool, False),
-              'optical': (bool, False),
-              'bitpix': (int, -32),
-              'minpix': (int, 0),
-              'maxpix': (int, -1),
-              'overwrite': (bool, False),
-              'dropstokes': (bool, False),
-              'stokeslast': (bool, True),
-              'history': (bool, True),
-              'dropdeg': (bool, False)}
-        super().__init__('exportfits', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Concat(_CasaTask):
     """
     Task to handle concatenation of measurement sets
     """
+    _DEFAULTS = {'vis': (list, ['']),
+                 'concatvis': (str, ''),
+                 'freqtol': (str, ''),
+                 'dirtol': (str, ''),
+                 'respectname': (bool, False),
+                 'timesort': (bool, False),
+                 'copypointing': (bool, True),
+                 'visweightscale': (list, []),
+                 'forcesingleephemfield': (str, '')}
+    _NAME = 'concat'
 
     def __init__(self, **kwargs):
-        ps = {'vis': (list, ['']),
-              'concatvis': (str, ''),
-              'freqtol': (str, ''),
-              'dirtol': (str, ''),
-              'respectname': (bool, False),
-              'timesort': (bool, False),
-              'copypointing': (bool, True),
-              'visweightscale': (list, []),
-              'forcesingleephemfield': (str, '')}
-        super().__init__('concat', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Chdir(_CasaTask):
@@ -318,85 +323,91 @@ class Chdir(_CasaTask):
 
     NOTE that this task does not take kwargs, only a single arg.
     """
+    _DEFAULTS = {1: (str, '')}
+    _NAME = 'os.chdir'
 
     def __init__(self, *args):
-        ps = {1: (str, '')}
-        super().__init__('os.chdir', ps, *args)
+        super().__init__(*args)
 
 
 class Mkdir(_CasaTask):
     """
     Change the working directory
     """
+    _DEFAULTS = {'name': (str, ''),
+                 'mode': (int, 0o777),
+                 # 'exist_ok': (bool, True)
+                 }
+    _NAME = 'os.makedirs'
 
     def __init__(self, **kwargs):
-        ps = {'name': (str, ''),
-              'mode': (int, 0o777),}
-              #'exist_ok': (bool, True)}
-        super().__init__('os.makedirs', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Rmdir(_CasaTask):
     """
     Change the working directory
     """
+    _DEFAULTS = {'path': (str, ''),
+                 'ignore_errors': (bool, False)}
+    _NAME = 'shutil.rmtree'
 
     def __init__(self, **kwargs):
-        ps = {'path': (str, ''),
-              'ignore_errors': (bool, False)}
-        super().__init__('shutil.rmtree', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Imfit(_CasaTask):
     """
     Perform Gaussian fitting of a 2D flux distribution in the image plane
     """
+    _DEFAULTS = {'imagename': (str, ''),
+                 'box': (str, ''),
+                 'region': (str, ''),
+                 'chans': (str, ''),
+                 'stokes': (str, ''),
+                 'mask': (str, ''),
+                 'includepix': (list, []),
+                 'excludepix': (list, []),
+                 'residual': (str, ''),
+                 'model': (str, ''),
+                 'estimates': (str, ''),
+                 'logfile': (str, ''),
+                 'newestimates': (str, ''),
+                 'complist': (str, ''),
+                 'dooff': (bool, False),
+                 'offset': (float, 0.0),
+                 'fixoffset': (bool, False),
+                 'rms': ((float, int), -1),
+                 'noisefwhm': (str, ''),
+                 'summary': (str, '')}
+    _NAME = 'imfit'
 
     def __init__(self, **kwargs):
-        ps = {'imagename': (str, ''),
-              'box': (str, ''),
-              'region': (str, ''),
-              'chans': (str, ''),
-              'stokes': (str, ''),
-              'mask': (str, ''),
-              'includepix': (list, []),
-              'excludepix': (list, []),
-              'residual': (str, ''),
-              'model': (str, ''),
-              'estimates': (str, ''),
-              'logfile': (str, ''),
-              'newestimates': (str, ''),
-              'complist': (str, ''),
-              'dooff': (bool, False),
-              'offset': (float, 0.0),
-              'fixoffset': (bool, False),
-              'rms': ((float, int), -1),
-              'noisefwhm': (str, ''),
-              'summary': (str, '')}
-        super().__init__('imfit', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class Immath(_CasaTask):
     """
     Perform mathematical operations on image data
     """
+    _DEFAULTS = {'imagename': (str, ''),
+                 'mode': (str, 'evalexpr'),
+                 'expr': (str, ''),
+                 'varnames': (str, ''),
+                 'sigma': (str, '0.0mJy/beam'),
+                 'outfile': (str, 'immath_results.im'),
+                 'polithresh': (str, ''),
+                 'mask': (str, ''),
+                 'region': (str, ''),
+                 'box': (str, ''),
+                 'chans': (str, ''),
+                 'stokes': (str, ''),
+                 'imagemd': (str, ''),
+                 'prec': (str, 'float')}
+    _NAME = 'immath'
 
     def __init__(self, **kwargs):
-        ps = {'imagename': (str, ''),
-              'mode': (str, 'evalexpr'),
-              'expr': (str, ''),
-              'varnames': (str, ''),
-              'sigma': (str, '0.0mJy/beam'),
-              'outfile': (str, 'immath_results.im'),
-              'polithresh': (str, ''),
-              'mask': (str, ''),
-              'region': (str, ''),
-              'box': (str, ''),
-              'chans': (str, ''),
-              'stokes': (str, ''),
-              'imagemd': (str, ''),
-              'prec': (str, 'float')}
-        super().__init__('immath', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 class AddGaussPBresponse(_CasaTask):
@@ -404,23 +415,25 @@ class AddGaussPBresponse(_CasaTask):
     Add a telescope to the list of known primary-beam responses via the
     vpmanager and assumption of a Gaussian primary beam
     """
+    _DEFAULTS = {'telescope': (str, ''),
+                 'othertelescope': (str, ''),
+                 'dopb': (bool, True),
+                 'halfwidth': (str, '0.5deg'),
+                 'maxrad': (str, '1.0deg'),
+                 'reffreq': (str, '1.0GHz'),
+                 'isthispb': (str, 'PB'),
+                 'squintdir': (dict, {'m0': {'unit': 'rad', 'value': 0.0},
+                                      'm1': {'unit': 'rad', 'value': 0.0},
+                                      'refer': 'J2000',
+                                      'type': 'direction'}),
+                 'squintreffreq': (dict, {'unit': 'GHz', 'value': 1.0}),
+                 'dosquint': (bool, False),
+                 'paincrement': (dict, {'unit': 'deg', 'value': 720.0}),
+                 'usesymmetricbeam': (bool, False)}
+    _NAME = 'vp.setpbgauss'
+
     def __init__(self, **kwargs):
-        ps = {'telescope': (str, ''),
-              'othertelescope': (str, ''),
-              'dopb': (bool, True),
-              'halfwidth': (str, '0.5deg'),
-              'maxrad': (str, '1.0deg'),
-              'reffreq': (str, '1.0GHz'),
-              'isthispb': (str, 'PB'),
-              'squintdir': (dict, {'m0': {'unit': 'rad', 'value': 0.0},
-                                   'm1': {'unit': 'rad', 'value': 0.0},
-                                   'refer': 'J2000',
-                                   'type': 'direction'}),
-              'squintreffreq': (dict,  {'unit': 'GHz', 'value': 1.0}),
-              'dosquint': (bool, False),
-              'paincrement': (dict, {'unit': 'deg', 'value': 720.0}),
-              'usesymmetricbeam': (bool, False)}
-        super().__init__('vp.setpbgauss', ps, **kwargs)
+        super().__init__(**kwargs)
 
 
 # Module testing code below
