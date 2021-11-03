@@ -16,22 +16,19 @@ params = {'min_el':    20.,    # Min. elevation for synthetic observations (deg)
           'dcys':      {"model_dcy": os.sep.join([os.getcwd(), 'test_output_dcy'])},
           # Continuum observations
           'continuum': {'times':  np.array([0.]),  # yr
-                        'freqs':  np.array([1.5, 3.0, 6., 10., 22., 33., 43., 5.05]) * 1e9,
-                        't_obs':  np.array([1200, 1200, 3600, 1200, 1200, 1800, 2400, 59400]),
-                        'tscps':  np.array([('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('EMERLIN', '0')]),
-                        't_ints': np.array([5, 5, 5, 5, 5, 5, 5, 5]),    # secs
-                        'bws':    np.array([1e9, 2e9, 2e9, 4e9, 4e9, 4e9, 8e9, .5e9]),  # Hz
-                        'chanws': np.array([1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 2.e8])},  # int
+                        'freqs':  np.array([15.]) * 1e9,
+                        't_obs':  np.array([2400]),
+                        'tscps':  np.array([('VLA', 'A')]),
+                        't_ints': np.array([5]),    # secs
+                        'bws':    np.array([2e9]),  # Hz
+                        'chanws': np.array([1e8])},  # int
           # Radio recombination line observations
-          'rrls':      {'times':  np.array([0.]),  # yr
-                        'lines':  np.array(['H58a']),  # str (Element+n+dn)
-                        't_obs':  np.array([30000]),  # secs
-                        'tscps':  np.array([('VLA', 'A')]),  # (tscop, config)
-                        't_ints': np.array([60.]),  # secs
-                        'bws':    np.array([1e8]),  # Hz
-                        'chanws': np.array([1e5])},  # Hz
+          'rrls':      {'times':  np.array([]),  # yr
+                        'lines':  np.array([]),  # str (Element+n+dn)
+                        't_obs':  np.array([]),  # secs
+                        'tscps':  np.array([]),  # (tscop, config)
+                        't_ints': np.array([]),  # secs
+                        'bws':    np.array([]),  # Hz
+                        'chanws': np.array([])},  # Hz
           }
 # ############################################################################ #

@@ -40,7 +40,7 @@ class _CasaTask(object):
                                 'value in parameter {}s 2-tuple '
                                 'value not {}'.format(key, str(p[0])))
             if type(p[0]) is tuple:
-                if set([type(_) for _ in (float, int)]) != {type}:
+                if any([type(_) != type for _ in p[0]]):
                     raise TypeError('Tuple must only contain types not '
                                     '{}'.format([type(_) for _ in p[0]]))
                 if type(p[1]) not in p[0]:
@@ -405,6 +405,72 @@ class Immath(_CasaTask):
                  'imagemd': (str, ''),
                  'prec': (str, 'float')}
     _NAME = 'immath'
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class IaClose(_CasaTask):
+    """
+    Close the casa's ia tool
+    """
+    _DEFAULTS = {}
+    _NAME = 'ia.close'
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class IaMaskhandler(_CasaTask):
+    _DEFAULTS = {'op': (str, 'default'),
+                 'name': ((str, list), [])}
+    _NAME = 'ia.maskhandler'
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class IaOpen(_CasaTask):
+    """
+    Attaches casa's ia tool to a designated image
+    """
+    _DEFAULTS = {'infile': (str, ''),
+                 'cache': (bool, True)}
+    _NAME = 'ia.open'
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class IaPad(_CasaTask):
+    """
+    Pad an ia-attached image by a set number of pixels on each side
+    """
+    _DEFAULTS = {'outfile': (str, ''),
+                 'npixels': (int, 1),
+                 'value': (int, 0),
+                 'padmask': (bool, False),
+                 'overwrite': (bool, False),
+                 'region': (str, ''),
+                 'box': (str, ''),
+                 'chans': (str, ''),
+                 'stokes': (str, ''),
+                 'mask': (str, ''),
+                 'stretch': (bool, False),
+                 'wantreturn': (bool, True)}
+    _NAME = 'ia.pad'
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class IaRestoringbeam(_CasaTask):
+    """
+    Get the restoring beam(s) of an ia-attached image and return as a dict
+    """
+    _DEFAULTS = {'channel': (int, -1),
+                 'polarization': (int, -1)}
+    _NAME = 'ia.restoringbeam'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

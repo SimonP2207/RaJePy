@@ -1,11 +1,12 @@
 # RaJePy
 ## Overview
-**Ra**dio **Je**ts in **Py**thon (RaJePy) is a Python package which conducts radiative transfer calculations towards a power-law-based, physical model of an ionised jet. Data products from those calculations are subsequently used as the models to conduct synthetic, interferometric radio imaging from.
+**Ra**dio **Je**ts in **Py**thon (RaJePy) is a Python library which conducts radiative transfer (RT) calculations towards a power-law-based, physical model of an ionised jet. Data products from those calculations are subsequently used as the models to conduct synthetic, interferometric radio imaging upon. Both continuum and radio recombination line (RRL) observations are supported, though be aware that RRL RT calculations currently assume local thermodynamic equilibrium (LTE). Incorporating non-LTE effects into the RRL RT calculations is the next priority in RaJePy's development so that physically accurate synthetic RRL images can be derived.
 
 ## Purpose
 - Inform radio astronomers on the significance of the detrimental effects of the interferometric imaging of ionised jets
 - Allow observers to determine the best telescope configurations and observing frequencies for their science target
 - Determine the spectral and morphological evolution of jets with variable ejection events/mass loss rates
+- Determine RRL-observability with current and future observers
 
 ## Instructions for use
 RaJePy's operation is based upon the interplay between the `JetModel` and `Pipeline` classes defined in `classes.py` and initialised in the namespace of the RaJePy module. Basic use can be achieved via the command line with a command of the following syntax:
@@ -60,7 +61,7 @@ params = {
                  "r_0": 1.,  # Launching radius, au
                  "inc": 90.,  # Inclination angle where 0 <= i <= 90, deg
                  "pa": 70.,  # Blue (approaching) jet position angle, deg
-                 "rotation": "CCW",  # Rotation sense, either "CCW" or "CW"
+                 "rotation": "CCW",  # Jet-rotation sense, either "CCW" or "CW"
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
                    "q_T": 0.,  # Temperature index
@@ -126,7 +127,7 @@ Jet geometry parameters
 | `"r_0"`       | Launching radius (au)                                              | `float` | `4.0`    |
 | `"inc"`       | Jet inclination (deg)                                              | `float` | `90.`    |
 | `"pa"`        | Jet position angle (deg)                                           | `float` | `0.`     |
-| `"rotation"` | Rotation sense of the jet and counter-jet. Must be either "CCW" (counter-clockwise) or "CW" (clockwise)   | `str` | `CCW     |
+| `"rotation"` | Rotation sense of the jet and counter-jet, around the propagation (r) axis. Must be either "CCW" (counter-clockwise) or "CW" (clockwise)   | `str` | `CCW     |
 
 ### Model-parameter section `'power_laws'`
 Power-law coefficients defining the physical model in velocity, temperature, ionisiation fraction and number density
@@ -291,7 +292,7 @@ If `/example/dcy` was given for `params['dcys']['model_dcy']` in the pipeline pa
 
 ## `classes.py` 
 ### `classes.JetModel`
-The purpose of the `JetModel` class is to initialise and calculate the physical model grid for an ionised jet.
+The purpose of the `JetModel` class is to initialise/calculate the physical model grid and conduct radiative transfer calulations.
 
 JetModel's `__init__` method takes one compulsory argument, `params`, and two optional keyword-arguments, `verbose` and `log`:
 - `params` : Full path to the model parameters file, an example for which is `RaJePy/files/example-model-params.py` (see a full description below)
@@ -319,10 +320,10 @@ The `execute` method runs the complete pipeline, producing relevant plots, `.fit
 | `clobber`    | Whether to redo and overwrite previously written files [soon to be deprecated]               | `bool` |
 
 ### `classes.ContinuumRun` class
-Abstract class containing all observational properties derived from pipeline param file, for a continuum run.
+Data class containing all observational properties derived from pipeline param file, for a continuum run.
 
 ### `classes.RRLRun` class
-Abstract class containing all observational properties derived from pipeline param file, for an RRL run. Child class of `ContinuumRun`.
+Data class containing all observational properties derived from pipeline param file, for an RRL run. Child class of `ContinuumRun`.
 
 ### `casa.Script` class
 Class containing all `casa` tasks to be executed with given parameters, in a defined order. Methods include `add_task` and `execute`. The latter method writes the `.py` file, based upon instance's parameter values,  which is executed via the command `casa --nogui --nologger --agg --logfile XXX.log -c XXX.py`.
@@ -371,6 +372,5 @@ Python >= 3.6 (f-string dependence)
 - ~~Incorporate inclination into jet model~~
 - ~~Incorporate position angle into jet model~~
 - ~~Implement more than one channel across bandwidth for more accurate multi-frequency synthesis~~
-- Incorporate 
-- Parallelise code, especially different synthetic observations and model calculations
 - Incorporate non-LTE effects into RRL radiative transfer calculations
+- Parallelise code, especially different synthetic observations and model calculations

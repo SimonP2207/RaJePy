@@ -7,10 +7,9 @@ Use would be with a RaJePy.classes.JetModel class instance e.g.:
 jet_model = RaJePy.classes.JetModel('/full/path/to/example-model-params.py')
 """
 import numpy as np
-import scipy.constants as con
 
 params = {
-    "target": {"name": "test1",  # Jet/YSO/Model name
+    "target": {"name": "test2",  # Jet/YSO/Model name
                "ra": "04:31:34.07736",  # HH:MM:SS.SS... [J2000]
                "dec": "+18:08:04.9020",  # DD:MM:SS.SS... [J2000]
                "epoch": "J2000",
@@ -23,23 +22,23 @@ params = {
     "grid": {"n_x": 50,  # No. of cells in x
              "n_y": 400,  # No. of cells in y
              "n_z": 50,  # No. of cells in z
-             "l_z": 0.2,  # Length of z-axis. Overrides n_x/n_y/n_z.
+             "l_z": 0.5,  # Length of z-axis. Overrides n_x/n_y/n_z.
              "c_size": 0.5,  # Cell size (au)
              },
     "geometry": {"epsilon": 7. / 9.,  # Jet width index
                  "opang": 20.,  # Jet opening angle (deg)
                  "w_0": 2.5,  # Half-width of jet base (au)
-                 "r_0": 10.,  # Launching radius (au)
-                 "inc": -45.,  # Inclination angle (deg)
-                 "pa": -60.,  # Jet position PA (deg), 60deg nominally
-                 "rotation": "CCW",  # Rotation sense, one of CCW or CW
+                 "r_0": 2.5,  # Launching radius (au)
+                 "inc": 90.,  # Inclination angle (deg)
+                 "pa": 0.,  # Jet position PA (deg), 60deg nominally
+                 "rotation": "CW",  # Rotation sense, one of CCW or CW
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
                    "q_T": 0.,  # Temperature index
                    "q_x": 0.,  # Ionisation fraction index
-                   "q^d_n": 0. / 8., # Cross-sectional density index
-                   "q^d_T": 0., # Cross-sectional temperature index
-                   "q^d_v": -0.5, # Cross-sectional velocity index
+                   "q^d_n": 0.,  # Cross-sectional density index
+                   "q^d_T": 0.,  # Cross-sectional temperature index
+                   "q^d_v": 0.,  # Cross-sectional velocity index
                    "q^d_x": 0.  # Cross-sectional ionisation fraction index
                    },
     "properties": {"v_0": 150.,  # Ejection velocity (km/s)
@@ -49,25 +48,8 @@ params = {
                    "mu": 1.3,  # Mean atomic weight (m_H)
                    "mlr": 1e-7,  # Msol / yr
                    },
-    "ejection": {"t_0": np.array([1.]),  # Peak times of bursts (yr)
+    "ejection": {"t_0": np.array([10.]),  # Peak times of bursts (yr)
                  "hl": np.array([0.5]),  # Half-lives of bursts (yr)
                  "chi": np.array([5.]),  # Burst factors
                  }
-             }
-# ############################################################################ #
-# ####################### DO NOT CHANGE BELOW ################################ #
-# ############################################################################ #
-# 'Modified' Reynolds ejection radius
-params["geometry"]["mod_r_0"] = params['geometry']['epsilon'] * \
-                                params['geometry']['w_0'] / \
-                                np.tan(np.radians(params['geometry']['opang']
-                                                  / 2.))
-
-# Derive power-law indices for number density and optical depths as functions
-# of distance along the jet axis, r
-params["power_laws"]["q_n"] = -params["power_laws"]["q_v"] - \
-                              (2.0 * params["geometry"]["epsilon"])
-params["power_laws"]["q_tau"] = params["geometry"]["epsilon"] + \
-                                2.0 * params["power_laws"]["q_x"] + \
-                                2.0 * params["power_laws"]["q_n"] - \
-                                1.35 * params["power_laws"]["q_T"]
+}

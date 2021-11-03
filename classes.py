@@ -2699,7 +2699,7 @@ class Pipeline:
 
                 if run.obs_type == 'continuum':
                     specmode = 'mfs'
-                    restfreq = []
+                    restfreq = tasks.Tclean._DEFAULTS['restfreq'][1]
                 else:
                     specmode = 'cube'
                     restfreq = [str(run.freq) + 'Hz']
