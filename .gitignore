@@ -1,0 +1,6 @@
+
+.DS_Store
+/.idea
+/.idea/*
+/test_output_dcy
+/test_output_dcy/*

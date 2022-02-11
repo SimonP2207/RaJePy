@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 from . import _config as cfg
 from . import _constants as cnsts
 from .classes import *
