@@ -14,18 +14,17 @@ import sys
 import os
 import time
 import pickle
-from collections.abc import Iterable
 from typing import Union, Callable, List, Tuple, Dict
 
-import tabulate
+import numpy.typing as npt
 import numpy as np
+import tabulate
 import astropy.units as u
 import scipy.constants as con
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from matplotlib.colors import LogNorm
 
-from RaJePy import cnsts
 from RaJePy import logger
 from RaJePy import _config as cfg
 from RaJePy.maths import geometry as mgeom
@@ -45,8 +44,9 @@ class JetModel:
     Class to handle physical model of an ionised jet from a young stellar object
     """
     _arr_indexing = 'ij'  # numpy.meshgrid indexing type
+
     @classmethod
-    def load_model(cls, model_file: str):
+    def load_model(cls, model_file: str) -> "JetModel":
         """
         Loads model from a saved state (pickled file)
 
@@ -71,9 +71,9 @@ class JetModel:
         if 'log' in loaded:
             new_jm = cls(loaded["params"], log=loaded['log'])
         else:
-            dcy = os.path.expanduser('~')
+            dcy_ = os.path.expanduser('~')
             new_jm = cls(loaded["params"],
-                         log=logger.Log(dcy + os.sep + 'temp.log'))
+                         log=logger.Log(dcy_ + os.sep + 'temp.log'))
 
         # If fill factors/projected areas have been previously calculated,
         # assign to new instance
@@ -122,9 +122,10 @@ class JetModel:
         return nx, ny, nz
 
     @staticmethod
-    def py_to_dict(py_file):
+    def py_to_dict(py_file: str) -> Dict:
         """
-        Convert .py file (full path as str) containing relevant model parameters to dict
+        Convert .py file (full path as str) containing relevant model parameters
+        to dict
         """
         if not os.path.exists(py_file):
             raise FileNotFoundError(py_file + " does not exist")
@@ -140,7 +141,8 @@ class JetModel:
 
         return jp.params
 
-    def __init__(self, params: Union[dict, str], log: Union[None, logger.Log]=None):
+    def __init__(self, params: Union[dict, str],
+                 log: Union[None, logger.Log] = None):
         """
 
         Parameters
@@ -213,9 +215,9 @@ class JetModel:
         # Create necessary class-instance attributes for all necessary grids
         self._ff = None  # cell fill factors
         self._areas = None  # cell projected areas along y-axis
-        self._idxs = None   # Grid of cell indices
+        self._idxs = None  # Grid of cell indices
         self._grid = None  # grid of cell-centre positions
-        self._rwp = None
+        self._rwp = None  # Grid of cells' centroids' r, w, p coordinates
         self._rreff = None  # grid of cell-centre r_eff-coordinates
         self._ts = None  # grid of cell-material times since launch
         self._m = None  # grid of cell-masses
@@ -224,7 +226,7 @@ class JetModel:
         self._temp = None  # grid of cell temperatures
         self._v = None  # 3-tuple of cell x, y and z velocity components
         self._ss_jml = self.params["properties"]["mlr"] * 1.989e30 / con.year
-        
+
         n_0 = mphys.n_0_from_mlr(self.params["properties"]["mlr"],
                                  self.params["properties"]["v_0"],
                                  self.params["geometry"]["w_0"],
@@ -247,7 +249,7 @@ class JetModel:
 
         self._time = 0. * con.year  # Current time in jet model
 
-    def __str__(self):
+    def __str__(self) -> str:
         p = self.params
         h = ['Parameter', 'Value']
         d = [('epsilon', format(p['geometry']['epsilon'], '+.3f')),
@@ -292,9 +294,10 @@ class JetModel:
         s += delim + delim.join([format(h[0], '^' + str(col1_width)),
                                  format(h[1], '^' + str(col2_width))]) + delim
         s += '\n' + hline + '\n'
-        for l in d:
-            s += delim + delim.join([format(l[0], '^' + str(col1_width)),
-                                     format(l[1], '^' + str(col2_width))]) + \
+        for line_ in d:
+            s += delim + \
+                 delim.join([format(line_[0], '^' + str(col1_width)),
+                             format(line_[1], '^' + str(col2_width))]) + \
                  delim + '\n'
         s += hline + '\n'
 
@@ -323,25 +326,26 @@ class JetModel:
                 bcol2_w += 1
 
         # Burst header and units
-        for l in (hb, units):
-            s += delim + delim.join([format(l[0], '^' + str(bcol1_w)),
-                                     format(l[1], '^' + str(bcol2_w)),
-                                     format(l[2], '^' + str(bcol3_w))]) + \
+        for line_ in (hb, units):
+            s += delim + delim.join([format(line_[0], '^' + str(bcol1_w)),
+                                     format(line_[1], '^' + str(bcol2_w)),
+                                     format(line_[2], '^' + str(bcol3_w))]) + \
                  delim + '\n'
         s += hline + '\n'
 
         # Burst(s) information
-        for l in db:
-            s += delim + delim.join([format(l[0], '^' + str(bcol1_w)),
-                                     format(l[1], '^' + str(bcol2_w)),
-                                     format(l[2], '^' + str(bcol3_w))]) + \
+        for line_ in db:
+            s += delim + delim.join([format(line_[0], '^' + str(bcol1_w)),
+                                     format(line_[1], '^' + str(bcol2_w)),
+                                     format(line_[2], '^' + str(bcol3_w))]) + \
                  delim + '\n'
         s += hline + '\n'
 
         return s
 
     @property
-    def los_axis(self):
+    def los_axis(self) -> int:
+        """Which numpy axis lies parallel to the observer's line-of-sight"""
         if self._arr_indexing == 'ij':
             return 1
         elif self._arr_indexing == 'xy':
@@ -360,28 +364,30 @@ class JetModel:
         self._time = new_time
 
     @property
-    def jml_t(self) -> Callable:
+    def jml_t(self) -> Callable[[Union[float, np.ndarray]],
+                                Union[float, np.ndarray]]:
         """Callable for jet-mass loss rate as a function of time, which is
-        the callable's sole arg"""
+        the callable's sole arg. [kg/s]"""
         return self._jml_t
 
     @jml_t.setter
-    def jml_t(self, new_jml_t: Callable[[float], float]):
+    def jml_t(self, new_jml_t: Callable[[Union[float, np.ndarray]],
+                                        Union[float, np.ndarray]]):
         self._jml_t = new_jml_t
 
-    def add_ejection_event(self, t_0, peak_jml, half_life):
+    def add_ejection_event(self, t_0: float, peak_jml: float, half_life: float):
         """
         Add ejection event in the form of a Gaussian ejection profile as a
         function of time
 
         Parameters
         ----------
-        t_0 : astropy.units.quantity.Quantity
-            Time of peak mass loss rate
-        peak_jml : astropy.units.quantity.Quantity
-            Highest jet mass loss rate of ejection burst
-        half_life : astropy.units.quantity.Quantity
-            Time for mass loss rate to halve during the burst
+        t_0
+            Time of peak mass loss rate [s]
+        peak_jml
+            Highest jet mass loss rate of ejection burst [kg/s]
+        half_life
+            Time for mass loss rate to halve during the burst [s]
 
         Returns
         -------
@@ -389,7 +395,8 @@ class JetModel:
 
         """
 
-        def func(fnc, _t_0, _peak_jml, _half_life):
+        def func(fnc: Callable[[float], float], _t_0: float, _peak_jml: float,
+                 _half_life: float) -> Callable[[float], float]:
             """
 
             Parameters
@@ -406,7 +413,7 @@ class JetModel:
 
             """
 
-            def func2(t):
+            def func2(t: float) -> float:
                 """Gaussian profiled ejection event"""
                 amp = _peak_jml - self._ss_jml
                 sigma = _half_life * 2. / (2. * np.sqrt(2. * np.log(2.)))
@@ -471,7 +478,7 @@ class JetModel:
         return self.grid[2]
 
     @property
-    def grid_rwp(self):
+    def grid_rwp(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Grid of cells' centroids' r, w, p coordinates in au"""
         if self._rwp:
             return self._rwp
@@ -546,7 +553,7 @@ class JetModel:
         # refl_sym_x = False  # Reflective symmetry about x-axis?
         # refl_sym_y = False  # Reflective symmetry about y-axis?
         # refl_sym_z = False  # Reflective symmetry about z-axis?
-        # refl_axes = []  # List holding reflected axes for use with numpy arrays
+        # refl_axes = []  # List holding reflected axes for use with np arrays
         #
         # if self.params["geometry"]["inc"] == 90.:
         #     if self.params["geometry"]["pa"] == 0.:
@@ -569,9 +576,11 @@ class JetModel:
         #                         int(self.nz / 2):] for _ in self.grid]
         #     else:
         #         if refl_sym_x:
-        #             xx, yy, zz = [_[int(self.nx / 2):, :, :] for _ in self.grid]
+        #             xx, yy, zz = [_[int(self.nx / 2):, :, :]
+        #                           for _ in self.grid]
         #         elif refl_sym_y:
-        #             xx, yy, zz = [_[:, int(self.ny / 2):, :] for _ in self.grid]
+        #             xx, yy, zz = [_[:, int(self.ny / 2):, :]
+        #                           for _ in self.grid]
         #         else:
         #             err_msg = u"Grid symmetry not understood for i = {:.0f}" \
         #                       u"\u00B0 and \u03B8={:.0f}\u00B0"
@@ -601,13 +610,13 @@ class JetModel:
         pa = self.params['geometry']['pa']
         cs = self.csize
 
-        nvoxels = np.prod(np.shape(self.xx))
         ffs = np.zeros(np.shape(self.xx))
-        areas = np.zeros(np.shape(self.xx))  # Areas as projected on to the y-axis
-        diag = np.sqrt(cs ** 2. * 3.)  # Diagonal dimensions of cells (au)
-
-        count = 0
-        progress = -1
+        areas = np.zeros(
+            np.shape(self.xx))  # Areas as projected on to the y-axis
+        # diag = np.sqrt(cs ** 2. * 3.)  # Diagonal dimensions of cells (au)
+        # nvoxels = np.prod(np.shape(self.xx))
+        # count = 0
+        # progress = -1
         then = time.time()
 
         n_verts_inside = np.zeros(np.shape(self.xx), dtype=int)
@@ -633,8 +642,8 @@ class JetModel:
         #             # full diagonal dimension away from the jet's width at
         #             # the cells' r-coordinate
         #             wr = mgeom.w_r(self.rr[idxy][idxx][idxz],
-        #                            w_0, mod_r_0, r_0, eps)  # Removed np.abs(r) here
-        #
+        #                            w_0, mod_r_0, r_0, eps)  # Removed
+        #                                                     # np.abs(r) here
         #             if (self.ww[idxy][idxx][idxz] - 0.5 * diag) > wr:
         #                 continue
         #
@@ -652,7 +661,9 @@ class JetModel:
         #             # Cell-vertices' r, w and phi coordinates
         #             rv, wv, pv = mgeom.xyz_to_rwp(verts[::, 0], verts[::, 1],
         #                                           verts[::, 2], inc, pa)
-        #             wr = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)  # Removed np.abs(r) here
+        #             wr = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)  # Removed
+        #                                                         # np.abs(r)
+        #                                                         # here
         #             verts_inside = (wv <= wr) & (np.abs(rv) >= r_0)
         #
         #             if np.sum(verts_inside) == 8:
@@ -679,7 +690,7 @@ class JetModel:
         #             pblen -= 16  # 16 non-varying characters
         #             s = '[' + ('=' * (int(progress / 100 * pblen) - 1)) + \
         #                 ('>' if int(progress / 100 * pblen) > 0 else '') + \
-        #                 (' ' * int(pblen - int(progress / 100 * pblen))) + '] '
+        #                 (' ' * int(pblen - int(progress / 100 * pblen))) + ']'
         #             # s += format(int(progress), '3') + '% complete'
         #             if progress != 0.:
         #                 t_sofar = (time.time() - then)
@@ -733,12 +744,12 @@ class JetModel:
         if self._areas is not None:
             return self._areas
 
-        self.fill_factor  # Areas calculated as part of fill factors
+        _ = self.fill_factor  # Areas calculated as part of fill factors
 
         return self._areas
 
     @property
-    def mass(self):
+    def mass(self) -> np.ndarray:
         if self._m is not None:
             return self._m
 
@@ -781,7 +792,7 @@ class JetModel:
               self.fill_factor)
 
         ms = np.where(self.fill_factor > 0, ms, np.NaN)
-        self.mass = ms
+        self._m = ms
 
         return self._m
 
@@ -817,7 +828,7 @@ class JetModel:
         """
         Chi factor (the burst factor) as a function of position.
         """
-        return self._jml_t(self.ts) / self._ss_jml
+        return self.jml_t(self.ts) / self._ss_jml
 
     @property
     def number_density(self) -> np.ndarray:
@@ -864,7 +875,7 @@ class JetModel:
         if self._xi is not None:
             return self._xi
 
-        R_1 = self.params["target"]["R_1"]
+        r_1 = self.params["target"]["R_1"]
         mod_r_0 = self.params['geometry']['mod_r_0']
         r_0 = self.params['geometry']['r_0']
         q_x = self.params["power_laws"]["q_x"]
@@ -876,9 +887,9 @@ class JetModel:
                      (r_0 + r + self.csize / 2.) / 2., r)
 
         # xi = x_0 * mgeom.rho(r, r_0, mod_r_0) ** q_x * \
-        #      (self.rreff / R_1) ** q_xd
+        #      (self.rreff / r_1) ** q_xd
         xi = mgeom.cell_value(x_0, mgeom.rho(r, r_0, mod_r_0), self.rreff,
-                                R_1, q_x, q_xd)
+                              r_1, q_x, q_xd)
         xi = np.where(self.fill_factor > 0, xi, np.NaN)
         xi = np.where(xi == 0, np.NaN, xi)
 
@@ -899,21 +910,19 @@ class JetModel:
         if self._temp is not None:
             return self._temp
 
-        R_1 = self.params["target"]["R_1"]
+        r_1 = self.params["target"]["R_1"]
         mod_r_0 = self.params['geometry']['mod_r_0']
         r_0 = self.params['geometry']['r_0']
-        q_T = self.params["power_laws"]["q_T"]
-        q_Td = self.params["power_laws"]["q^d_T"]
-        T_0 = self.params["properties"]["T_0"]
+        q_t = self.params["power_laws"]["q_T"]
+        q_td = self.params["power_laws"]["q^d_T"]
+        temp_0 = self.params["properties"]["T_0"]
 
         r = np.abs(self.rr) * con.au * 1e2
         r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
                      (r_0 + r + self.csize / 2.) / 2., r)
 
-        # temp = T_0 * mgeom.rho(r, r_0, mod_r_0) ** q_T * \
-        #        (self.rreff / R_1) ** q_Td
-        temp = mgeom.cell_value(T_0, mgeom.rho(r, r_0, mod_r_0), self.rreff,
-                                R_1, q_T, q_Td)
+        temp = mgeom.cell_value(temp_0, mgeom.rho(r, r_0, mod_r_0), self.rreff,
+                                r_1, q_t, q_td)
         temp = np.where(self.fill_factor > 0, temp, np.NaN)
         temp = np.where(temp == 0, np.NaN, temp)
 
@@ -993,8 +1002,7 @@ class JetModel:
         #
         # vz = np.where(self.fill_factor > 0., vz, np.NaN) * np.sign(self.rr)
 
-
-        R_1 = self.params["target"]["R_1"]
+        r_1 = self.params["target"]["R_1"]
         mod_r_0 = self.params['geometry']['mod_r_0']
         r_0 = self.params['geometry']['r_0']
         mr0 = self.params['geometry']['mod_r_0']
@@ -1007,8 +1015,8 @@ class JetModel:
                      (r_0 + r + self.csize / 2.) / 2., r)
 
         # vz = v_0 * mgeom.rho(r, r_0, mod_r_0) ** q_v * \
-        #      (self.rreff / R_1) ** q_vd
-        vz = mgeom.cell_value(v_0, mgeom.rho(r, r_0, mod_r_0), self.rreff, R_1,
+        #      (self.rreff / r_1) ** q_vd
+        vz = mgeom.cell_value(v_0, mgeom.rho(r, r_0, mod_r_0), self.rreff, r_1,
                               q_v, q_vd)
         vz = np.where(self.fill_factor > 0, vz, np.NaN)
         vz = np.where(vz == 0, np.NaN, vz)
@@ -1083,7 +1091,7 @@ class JetModel:
         return ems
 
     def optical_depth_rrl(self, rrl: str,
-                          freq: Union[float, Union[np.ndarray, List[float]]],
+                          freq: Union[float, npt.ArrayLike],
                           lte: bool = True,
                           savefits: Union[bool, str] = False,
                           collapse: bool = True) -> np.ndarray:
@@ -1125,7 +1133,7 @@ class JetModel:
 
         phi_v = mrrl.phi_voigt_nu(rest_freq, rrl_fwhm_stark, rrl_fwhm_thermal)
 
-        if isinstance(freq, Iterable):
+        if not np.isscalar(freq):
             if collapse:
                 tau_rrl = np.empty((np.shape(freq)[0], self.nx, self.nz))
             else:
@@ -1210,12 +1218,19 @@ class JetModel:
                                       self.temperature, np.NaN),
                              axis=self.los_axis)
 
-        if isinstance(freq, Iterable):
+        if lte:
+            line_intensity = mrrl.line_intensity_lte
+        else:
+            raise ValueError("Non-LTE RRL calculations not yet supported")
+            # line_intensity = mrrl.line_intensity_nonlte
+
+        if not np.isscalar(freq):  # isinstance(freq, Iterable):
             ints_rrl = np.empty((np.shape(freq)[0], self.nx, self.nz))
             for idx, nu in enumerate(freq):
-                tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, collapse=True)
+                tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte,
+                                                 collapse=True)
                 tau_ff = self.optical_depth_ff(freq, collapse=True)
-                i_rrl = mrrl.line_intensity_lte(freq, av_temp, tau_ff, tau_rrl)
+                i_rrl = line_intensity(freq, av_temp, tau_ff, tau_rrl)
                 ints_rrl[idx] = i_rrl
             if savefits:
                 self.save_fits(
@@ -1227,7 +1242,7 @@ class JetModel:
         else:
             tau_rrl = self.optical_depth_rrl(rrl, freq, lte=lte, collapse=True)
             tau_ff = self.optical_depth_ff(freq, collapse=True)
-            ints_rrl = mrrl.line_intensity_lte(freq, av_temp, tau_ff, tau_rrl)
+            ints_rrl = line_intensity(freq, av_temp, tau_ff, tau_rrl)
 
             if savefits:
                 self.save_fits(
@@ -1264,7 +1279,7 @@ class JetModel:
         flux_rrl : numpy.ndarray
             RRL fluxes as viewed along y-axis.
         """
-        if isinstance(freq, Iterable):
+        if not np.isscalar(freq):  # isinstance(freq, Iterable):
             fluxes = np.empty((np.shape(freq)[0], self.nx, self.nz))
             for idx, nu in enumerate(freq):
                 i_rrl = self.intensity_rrl(rrl, nu, lte=lte, savefits=False)
@@ -1324,7 +1339,7 @@ class JetModel:
 
         # Equation 1.26 and 5.19b of Rybicki and Lightman (cgs). Averaged
         # path length through voxel is volume / projected area
-        if isinstance(freq, Iterable):
+        if not np.isscalar(freq):  # isinstance(freq, Iterable):
             if collapse:
                 tff = np.empty((np.shape(freq)[0], self.nx, self.nz))
             else:
@@ -1363,7 +1378,7 @@ class JetModel:
                         )
 
         else:
-            # Gaunt factors of van Hoof et al. (2014). Use if constant temperature
+            # Gaunt factors of van Hoof et al. (2014). Use if constant temp
             # as computation via this method across a grid takes too long
             # Free-free Gaunt factors
             if self.params['power_laws']['q_T'] == 0.:
@@ -1372,9 +1387,9 @@ class JetModel:
             # Equation 1 of Reynolds (1986) otherwise as an approximation
             else:
                 gff = 11.95 * self.temperature ** 0.15 * freq ** -0.1
-            tff = 0.018 * self.temperature ** -1.5 * freq ** -2. * \
-                  n_es ** 2. * (self.csize * con.au * 1e2 *
-                                (self.fill_factor / self.areas)) * gff
+            tff = (0.018 * self.temperature ** -1.5 * freq ** -2. *
+                   n_es ** 2. * (self.csize * con.au * 1e2 *
+                                 (self.fill_factor / self.areas)) * gff)
 
             if collapse:
                 tff = np.nansum(tff, axis=self.los_axis)
@@ -1413,14 +1428,14 @@ class JetModel:
         """
         ts = self.temperature
 
-        if isinstance(freq, Iterable):
+        if not np.isscalar(freq):  # isinstance(freq, Iterable):
             ints_ff = np.empty((np.shape(freq)[0], self.nx, self.nz))
             for idx, nu in enumerate(freq):
-                T_b = np.nanmean(np.where(ts > 0., ts, np.NaN),
-                                 axis=self.los_axis) * \
-                      (1. - np.exp(-self.optical_depth_ff(nu)))
+                temp_b = np.nanmean(np.where(ts > 0., ts, np.NaN),
+                                    axis=self.los_axis) * \
+                         (1. - np.exp(-self.optical_depth_ff(nu)))
 
-                iff = 2. * nu ** 2. * con.k * T_b / con.c ** 2.
+                iff = 2. * nu ** 2. * con.k * temp_b / con.c ** 2.
                 ints_ff[idx] = iff
             if savefits:
                 self.save_fits(
@@ -1429,11 +1444,11 @@ class JetModel:
                     savefits, 'intensity', freq
                 )
         else:
-            T_b = np.nanmean(np.where(ts > 0., ts, np.NaN),
-                             axis=self.los_axis) * \
-                  (1. - np.exp(-self.optical_depth_ff(freq)))
+            temp_b = np.nanmean(np.where(ts > 0., ts, np.NaN),
+                                axis=self.los_axis) * \
+                     (1. - np.exp(-self.optical_depth_ff(freq)))
 
-            ints_ff = 2. * freq ** 2. * con.k * T_b / con.c ** 2.
+            ints_ff = 2. * freq ** 2. * con.k * temp_b / con.c ** 2.
 
             if savefits:
                 self.save_fits(
@@ -1460,7 +1475,7 @@ class JetModel:
         flux_ff : numpy.ndarray
             Fluxes as viewed along y-axis.
         """
-        if isinstance(freq, Iterable):
+        if not np.isscalar(freq):  # isinstance(freq, Iterable):
             fluxes = np.empty((np.shape(freq)[0], self.nx, self.nz))
             for idx, nu in enumerate(freq):
                 ints = self.intensity_ff(nu)
@@ -1624,7 +1639,7 @@ class JetModel:
         return self._nz
 
     @property
-    def params(self) -> dict:
+    def params(self) -> Dict:
         return self._params
 
     @property
@@ -1632,12 +1647,8 @@ class JetModel:
         return self._name
 
     @property
-    def ejections(self):
+    def ejections(self) -> Dict:
         return self._ejections
-
-    @property
-    def jml_t(self):
-        return self._jml_t
 
     @property
     def ss_jml(self):
@@ -1940,19 +1951,19 @@ class Pipeline:
             loaded['runs'][idx] = run
 
         loaded['model_file'] = loaded['model_file'].replace('~', home)
-        loaded['params']['dcys']['model_dcy'] = loaded['params']['dcys'] \
-            ['model_dcy'].replace('~', home)
-        jm = JetModel.load_model(loaded["model_file"])
+        full_dcy = loaded['params']['dcys']['model_dcy'].replace('~', home)
+        loaded['params']['dcys']['model_dcy'] = full_dcy
+        jm_ = JetModel.load_model(loaded["model_file"])
         params = loaded["params"]
 
         if 'log' in loaded:
-            new_modelrun = cls(jm, params, log=loaded['log'])
+            new_modelrun = cls.__init__(jm_, params, log=loaded['log'])
         else:
             dcy = os.path.dirname(os.path.expanduser(loaded['model_file']))
             log_file = os.sep.join([dcy,
                                     os.path.basename(load_file).split('.')[0]
                                     + '.log'])
-            new_modelrun = cls(jm, params, log=logger.Log(log_file))
+            new_modelrun = cls.__init__(jm_, params, log=logger.Log(log_file))
 
         new_modelrun.runs = loaded["runs"]
 
@@ -1961,15 +1972,16 @@ class Pipeline:
     @staticmethod
     def py_to_dict(py_file):
         """
-        Convert .py file (full path as str) containing relevant model parameters to dict
+        Convert .py file (full path as str) containing relevant model parameters
+        to dict
         """
         if not os.path.exists(py_file):
             raise FileNotFoundError(py_file + " does not exist")
         if os.path.dirname(py_file) not in sys.path:
             sys.path.append(os.path.dirname(py_file))
 
-        pl = __import__(os.path.basename(py_file)[:-3])
-        err = miscf.check_pline_params(pl.params)
+        pl_ = __import__(os.path.basename(py_file)[:-3])
+        err = miscf.check_pline_params(pl_.params)
 
         if err:
             raise err
@@ -1986,7 +1998,7 @@ class Pipeline:
         # if err is not None:
         #     raise err
 
-        return pl.params
+        return pl_.params
 
     def __init__(self, jetmodel: JetModel, params: Union[dict, str],
                  log: Union[None, logger.Log] = None):
@@ -2078,10 +2090,10 @@ class Pipeline:
         self.log.add_entry(mtype="INFO",
                            entry="Reading continuum runs into pipeline")
         idx1, idx2 = None, None
-        for idx1, time in enumerate(self.params['continuum']['times']):
+        for idx1, t in enumerate(self.params['continuum']['times']):
             for idx2, freq in enumerate(self.params['continuum']['freqs']):
                 run = ContinuumRun(
-                    self.dcy, time, freq,
+                    self.dcy, t, freq,
                     bws[idx2] if miscf.is_iter(bws) else bws,
                     chanws[idx2] if miscf.is_iter(chanws) else chanws,
                     t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
@@ -2102,9 +2114,9 @@ class Pipeline:
                            entry="Reading radio recombination line runs into "
                                  "pipeline")
         idx1, idx2 = None, None
-        for idx1, time in enumerate(self.params['rrls']['times']):
+        for idx1, t in enumerate(self.params['rrls']['times']):
             for idx2, line in enumerate(self.params['rrls']['lines']):
-                run = RRLRun(self.dcy, time, line,
+                run = RRLRun(self.dcy, t, line,
                              bws[idx2] if miscf.is_iter(bws) else bws,
                              chanws[idx2] if miscf.is_iter(chanws) else chanws,
                              t_obs[idx2] if miscf.is_iter(t_obs) else t_obs,
@@ -2129,10 +2141,10 @@ class Pipeline:
         vals = []
 
         for run in self.runs:
-            val = [run._year, run._obs_type.capitalize(), run._tscop,
-                   run._t_obs, run._t_int,
-                   None if run._obs_type == 'continuum' else run.line,
-                   run._freq, run._bandwidth, run._chanwidth,
+            val = [run.year, run.obs_type.capitalize(), run.tscop,
+                   run.t_obs, run.t_int,
+                   None if run.obs_type == 'continuum' else run.line,
+                   run.freq, run.bandwidth, run.chanwidth,
                    run.radiative_transfer, run.simobserve, run.completed]
 
             for i, v in enumerate(val):
@@ -2359,20 +2371,22 @@ class Pipeline:
                         if not os.path.exists(run.fits_flux) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Calculating fluxes and "
-                                                     f"saving to {run.fits_flux}")
+                                                     "saving to "
+                                                     f"{run.fits_flux}")
                             fluxes = self.model.flux_ff(run.chan_freqs,
                                                         savefits=run.fits_flux)
                         else:
                             self.log.add_entry(mtype="INFO",
-                                               entry="Fluxes already "
-                                                     f"exist -> {run.fits_flux}",
+                                               entry="Fluxes already exist -> "
+                                                     f"{run.fits_flux}",
                                                timestamp=False)
                             fluxes = fits.open(run.fits_flux)[0].data
                     else:
                         if not os.path.exists(run.fits_tau) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Computing optical depths "
-                                                     f"and saving to {run.fits_tau}")
+                                                     "and saving to "
+                                                     f"{run.fits_tau}")
                             self.model.optical_depth_rrl(run.line,
                                                          run.chan_freqs,
                                                          savefits=run.fits_tau)
@@ -2384,15 +2398,16 @@ class Pipeline:
                         if not os.path.exists(run.fits_flux) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Calculating fluxes and "
-                                                     f"saving to {run.fits_flux}")
+                                                     "saving to "
+                                                     f"{run.fits_flux}")
                             fluxes = self.model.flux_rrl(run.line,
                                                          run.chan_freqs,
                                                          contsub=False,
                                                          savefits=run.fits_flux)
                         else:
                             self.log.add_entry(mtype="INFO",
-                                               entry="Fluxes already "
-                                                     f"exist -> {run.fits_flux}",
+                                               entry="Fluxes already exist -> "
+                                                     f"{run.fits_flux}",
                                                timestamp=False)
                             fluxes = fits.open(run.fits_flux)[0].data
 
@@ -2450,7 +2465,8 @@ class Pipeline:
                 tscop_lat = casa.observatories.tscop_info.Lat[tscop]
 
                 min_ha = tgt_c.ra.hour - 12.
-                if min_ha < 0: min_ha += 24.
+                if min_ha < 0:
+                    min_ha += 24.
 
                 el_range = (maths.astronomy.elevation(tgt_c, tscop_lat,
                                                       min_ha),
@@ -2559,10 +2575,10 @@ class Pipeline:
 
                 if multiple_ms:
                     if os.path.exists(run.rt_dcy + os.sep + 'SynObs'):
-                        script.add_task(tasks.Rmdir(path=run.rt_dcy + os.sep +
-                                                         'SynObs'))
-                    script.add_task(tasks.Mkdir(name=run.rt_dcy + os.sep +
-                                                     'SynObs'))
+                        script.add_task(tasks.Rmdir(
+                            path=run.rt_dcy + os.sep + 'SynObs'))
+                    script.add_task(tasks.Mkdir(
+                        name=run.rt_dcy + os.sep + 'SynObs'))
                     clean_mss, noisy_mss = [], []
 
                     for project in projects:
@@ -2663,8 +2679,8 @@ class Pipeline:
                 eps = self.model.params['geometry']['epsilon']
                 dist_pc = self.model.params['target']['dist']
 
-                jet_deconv_maj_au = mod_r_0_au * tau_0 ** (-1. / q_tau) + \
-                                    r_0_au - mod_r_0_au
+                jet_deconv_maj_au = (mod_r_0_au * tau_0 ** (-1. / q_tau) +
+                                     r_0_au - mod_r_0_au)
                 jet_deconv_maj_au *= 2  # For biconical jet
                 jet_deconv_maj_as = np.arctan(jet_deconv_maj_au * con.au /
                                               (dist_pc * con.parsec))  # rad
@@ -2699,7 +2715,7 @@ class Pipeline:
 
                 if run.obs_type == 'continuum':
                     specmode = 'mfs'
-                    restfreq = tasks.Tclean._DEFAULTS['restfreq'][1]
+                    restfreq = tasks.Tclean.DEFAULTS['restfreq'][1]
                 else:
                     specmode = 'cube'
                     restfreq = [str(run.freq) + 'Hz']
@@ -3177,22 +3193,22 @@ class Pointing(object):
 if __name__ == '__main__':
     # import matplotlib.cm
     # import matplotlib.pylab as plt
-    from RaJePy.plotting import functions as plotf
 
     param_dcy = os.sep.join([os.path.dirname(__file__), 'test', 'test_cases'])
     jm = JetModel(os.sep.join([param_dcy, 'test1-model-params.py']))
     pl = Pipeline(jm, os.sep.join([param_dcy, 'test1-pipeline-params.py']))
-    dcy = os.path.expanduser('~')
+    cwdcy = os.path.expanduser('~')
     # pl.execute(simobserve=False, resume=False)
-    # plotf.plot_geometry(jm, savefig=os.sep.join([dcy, 'Desktop', 'geometry_plot.pdf']),
+    # plotf.plot_geometry(jm, savefig=os.sep.join([cwdcy, 'Desktop',
+    #                                              'geometry_plot.pdf']),
     #                     show_plot=False)
-    # plotf.model_plot(jm, savefig=os.sep.join([dcy, 'Desktop', 'model_plot.pdf']),
+    # plotf.model_plot(jm, savefig=os.sep.join([cwdcy, 'Desktop',
+    #                                           'model_plot.pdf']),
     #                  show_plot=False)
-
     # ns = miscf.reorder_axes(jm.number_density, 0, 2, 1, None, 'y', None)
     # hdu3d = fits.PrimaryHDU(ns)
     # hdul3d = fits.HDUList([hdu3d])
-    # fitsfile3d = os.sep.join([dcy, 'ns3d.fits'])
+    # fitsfile3d = os.sep.join([cwdcy, 'ns3d.fits'])
     # if os.path.exists(fitsfile3d):
     #     os.remove(fitsfile3d)
     # hdul3d.writeto(fitsfile3d)
@@ -3250,4 +3266,3 @@ if __name__ == '__main__':
     #
     #
     # print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")
-

@@ -1085,7 +1085,7 @@ def geometry_plot(jm: 'JetModel', show_plot: bool = False,
 
 def sed_plot(pline: 'Pipeline', plot_time: float,
              plot_reynolds: bool = True,
-             savefig: bool = False) -> None:
+             savefig: Union[bool, str] = False) -> None:
     import matplotlib.pylab as plt
     from RaJePy.maths import physics as mphys
     from RaJePy import _config as cfg
