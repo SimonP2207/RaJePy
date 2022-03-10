@@ -11,21 +11,18 @@ pipeline = RaJePy.classes.ModelRun('/full/path/to/example-pipeline-params.py')
 import os
 import numpy as np
 
-params = {'min_el':    20.,    # Minimum elevation for synthetic observations, deg
-          'dcys':      {"model_dcy": os.sep.join([os.getcwd(), 'test_output_dcy'])},  # Output root directory
+params = {'min_el':    20.,  # Minimum elevation for synthetic observations, deg
+          'dcys':      {"model_dcy": os.sep.join([os.path.expanduser('~'), 'Desktop', 'test_output_dcy2'])},  # Output root directory
           # Continuum observations
-          'continuum': {'times':  np.array([0.]),  # Model times, yr
-                        'freqs':  np.array([1.5, 3.0, 6., 10., 22., 33., 43., 5.05]) * 1e9,  # Frequencies of observations, Hz
-                        't_obs':  np.array([1200, 1200, 3600, 1200, 1200, 1800, 2400, 59400]),  # Total on-source times, s
-                        'tscps':  np.array([('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('VLA', 'A'),
-                                            ('VLA', 'A'), ('EMERLIN', '0')]),  # List of 2-tuples of (telescope, configuration)
-                        't_ints': np.array([5, 5, 5, 5, 5, 5, 5, 5]),  # Visibility integration times, s
-                        'bws':    np.array([1e9, 2e9, 2e9, 4e9, 4e9, 4e9, 8e9, .5e9]),  # Observational bandwidth, Hz
-                        'chanws': np.array([1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 1e8, 2.e8])},  # Channel widths, Hz
+          'continuum': {'times':  np.linspace(0., 5., 24 * 5 + 1),  # Model times, yr
+                        'freqs':  np.array([6.]) * 1e9,  # Frequencies of observations, Hz
+                        't_obs':  np.array([59400]),  # Total on-source times, s
+                        'tscps':  np.array([('EMERLIN', '0')]),  # Array of 2-tuples of (telescope, configuration)
+                        't_ints': np.array([5]),  # Visibility integration times, s
+                        'bws':    np.array([.5e9]),  # Observational bandwidth, Hz
+                        'chanws': np.array([2.e8])},  # Channel widths, Hz
           # Radio recombination line observations
-          'rrls':      {'times':  np.array([0.]),  # Model times, yr
+          'rrls':      {'times':  np.array([]),  # Model times, yr
                         'lines':  np.array(['H58a']),  # RRL lines to observe (Element+n+dn)
                         't_obs':  np.array([30000]),  # Total on-source times, s
                         'tscps':  np.array([('VLA', 'A')]),  # List of 2-tuples of (telescope, configuration)

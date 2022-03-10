@@ -236,18 +236,19 @@ def r_tau1(r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T, opang,
     return r / (con.au * 1e2) / dist
 
 
-
-def approx_flux_expected_r86(jm, freq):
+def approx_flux_expected_r86(jm: 'JetModel', freq: float, which: str):
     """
     Approximate flux expected from Equation 16 of Reynolds (1986) analytical
     model paper, for monopolar jet.
 
     Parameters
     ----------
-    jm : JetModel
+    jm
         Instance of JetModel class.
-    freq : float or Iterable
+    freq
         Frequency of observation (Hz)
+    which
+        Red or blue jet? 'R' or 'B', respectively
 
     Returns
     -------
@@ -267,6 +268,9 @@ def approx_flux_expected_r86(jm, freq):
                      w_0 ** 2. * jm.params['properties']["v_0"] * 1e5)
     else:
         n_0 = jm.params['properties']['n_0']
+
+    if which == 'R':
+        n_0 *= jm.ss_jml('R') / jm.ss_jml('B')
 
     c = (1. + jm.params['geometry']['epsilon'] +
          jm.params['power_laws']['q_T']) / jm.params['power_laws']['q_tau']
@@ -290,7 +294,7 @@ def approx_flux_expected_r86(jm, freq):
     return flux / 1e-26  # now in Jy
 
 
-def flux_expected_r86(jm, freq, y_max, y_min=None):
+def flux_expected_r86(jm, freq, which: str, y_max, y_min=None):
     """
     Exact flux expected from Equation 8 of Reynolds (1986) analytical model
     paper, for monopolar jet.
@@ -301,6 +305,8 @@ def flux_expected_r86(jm, freq, y_max, y_min=None):
         Instance of JetModel class.
     freq : float
         Frequency of observation (Hz)
+    which
+        Red or blue jet? 'R' or 'B', respectively
     y_max : float
         Jet's angular extent to integrate flux over (arcsecs).
     y_min : float
@@ -316,6 +322,10 @@ def flux_expected_r86(jm, freq, y_max, y_min=None):
     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
     T_0 = jm.params['properties']['T_0']  # K
     n_0 = jm.params['properties']['n_0']  # cm^-3
+
+    if which == 'R':
+        n_0 *= jm.ss_jml('R') / jm.ss_jml('B')
+
     x_0 = jm.params['properties']['x_0']  # dimensionless
     q_tau = jm.params["power_laws"]["q_tau"]  # dimensionless
     q_T = jm.params["power_laws"]["q_T"]  # dimensionless
@@ -475,7 +485,7 @@ def n_0_from_mlr(mlr: float, v_0: float, w_0: float, mu: float, q_nd: float,
     w_0 : float
         Full jet-width at the base of the jet (au)
     mu : float
-        Average atomic mass (u)
+        Average atomic mass (m_H)
     q_nd : float
         Power-law exponent for number density as a function of w
     q_nv : float
@@ -587,11 +597,11 @@ def nu_rrl(n, dn=1, atom="H"):
     """
     n_p, n_n = cnsts.NZ[atom]
 
-    M = atomic_mass(atom)
-    M -= con.m_e * n_p
+    mass = atomic_mass(atom)
+    mass -= con.m_e * n_p
 
-    R_M = con.Rydberg * (1. + con.m_e / M) ** -1.
-    return R_M * con.c * (1. / n ** 2. - 1. / (n + dn) ** 2.)
+    r_m = con.Rydberg * (1. + con.m_e / mass) ** -1.
+    return r_m * con.c * (1. / n ** 2. - 1. / (n + dn) ** 2.)
 
 
 def atomic_mass(atom):
@@ -919,58 +929,3 @@ def h_ss73(alpha, acc_rate, m_yso, radius, zone='c'):
 
     return (2.1e9 * alpha ** 0.05 * m_dot ** 0.425 * m_yso ** -0.45 *
             r ** (-21. / 16.) * (1. - r ** -0.5) ** 0.425)
-
-
-if __name__ == '__main__':
-    # def mlr_from_n_0(n_0: float, v_0: float, w_0: float, mu: float, q_nd: float,
-    #                  q_nv: float, R_1: float, R_2: float) -> float:
-    # def n_0_from_mlr(mlr: float, v_0: float, w_0: float, mu: float, q_nd: float,
-    #                  q_nv: float, R_1: float, R_2: float) -> float:
-    mlr = 1.7e-7
-    v0, w0, qnd, qvd  = 300., 5., -0.1, -0.5
-    qnd, qnv = -0.1, -0.5
-    qnd, qnv = 0, 0
-    r1, r2 = 0.25, 5.0
-    n_0 = n_0_from_mlr(mlr, v0, w0, 1.3, qnd, qnv, r1, r2)
-    calc_mlr = mlr_from_n_0(n_0, v0, w0, 1.3, qnd, qnv, r1, r2)
-
-    print(format(mlr, '.3e'), format(calc_mlr, '.3e'))
-    print(format(n_0, '.3e'), format(n_0, '.3e'))
-    # print('{:.0f} K'.format(temp_ss73(0.001, 1e-7, 1., 1.)))
-    # print('{:.2e} cm^-3'.format(n_ss73(0.001, 1e-7, 1., 1.)))
-    # print('{:.2f} au'.format(z0_ss73(0.001, 1e-7, 1., 1.)))
-    #
-    # x, y = np.meshgrid(np.linspace(-100, 100, 201),
-    #                    np.linspace(-100, 100, 201))
-    # rads = np.sqrt(x ** 2. + y ** 2.)
-    # vals = z0_ss73(0.001, 1e-7, 0.5, rads, zone='c')
-    #
-    # import matplotlib.pylab as plt
-    #
-    # plt.close('all')
-    #
-    # plt.imshow(vals)
-    #
-    # plt.show()
-
-    # from RaJePy.classes import JetModel
-    # import RaJePy as rjp
-    # import matplotlib.pylab as plt
-    #
-    # jm = JetModel(rjp.cfg.dcys['files'] + os.sep + 'example-model-params.py')
-    #
-    # freqs = np.logspace(8, 12, 13)
-    # fluxes, fluxes_approx = [], []
-    # r_0 = jm.params['geometry']['r_0']
-    # dist = jm.params['target']['dist']
-    # for freq in freqs:
-    #     fluxes.append(2 * flux_expected_r86(jm, freq, 10.))
-    #     fluxes_approx.append(2. * approx_flux_expected_r86(jm, freq))
-    #
-    # plt.close('all')
-    #
-    # plt.loglog(freqs, fluxes, 'ro')
-    # plt.loglog(freqs, fluxes_approx, 'gx')
-    #
-    # plt.show()
-    #

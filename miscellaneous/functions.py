@@ -161,10 +161,12 @@ def check_model_params(params):
                            ('n_0', float),
                            ('T_0', float),
                            ('mu', float),
-                           ('mlr', float)),
+                           ('mlr_bj', float),
+                           ('mlr_rj', float)),
             'ejection': (('t_0', (np.ndarray, float)),
                          ('hl', (np.ndarray, float)),
-                         ('chi', (np.ndarray, float)))}
+                         ('chi', (np.ndarray, float)),
+                         ('which', (np.ndarray, str)))}
 
     e = _param_key_check(params, keys)
     if isinstance(e, Exception):

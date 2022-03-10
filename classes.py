@@ -78,10 +78,10 @@ class JetModel:
         # If fill factors/projected areas have been previously calculated,
         # assign to new instance
         if loaded['ffs'] is not None:
-            new_jm.fill_factor = loaded['ffs']
+            new_jm._ff = loaded['ffs']
 
         if loaded['areas'] is not None:
-            new_jm.areas = loaded['areas']
+            new_jm._areas = loaded['areas']
 
         new_jm.time = loaded['time']
 
@@ -225,9 +225,13 @@ class JetModel:
         self._xi = None  # grid of cell ionisation fractions
         self._temp = None  # grid of cell temperatures
         self._v = None  # 3-tuple of cell x, y and z velocity components
-        self._ss_jml = self.params["properties"]["mlr"] * 1.989e30 / con.year
+        self._ss_jml_rb_frac = self.params["properties"]["mlr_rj"] / \
+                               self.params["properties"]["mlr_bj"]
+        self._ss_jml_bj = self.params["properties"]["mlr_bj"]
+        self._ss_jml_bj *= 1.989e30 / con.year
+        self._ss_jml_rj = self._ss_jml_bj * self._ss_jml_rb_frac
 
-        n_0 = mphys.n_0_from_mlr(self.params["properties"]["mlr"],
+        n_0 = mphys.n_0_from_mlr(self.params["properties"]["mlr_bj"],
                                  self.params["properties"]["v_0"],
                                  self.params["geometry"]["w_0"],
                                  self.params["properties"]["mu"],
@@ -237,15 +241,27 @@ class JetModel:
                                  self.params["target"]["R_2"])
         self.params["properties"]["n_0"] = n_0
 
-        # Create attribute for jet mass loss rate as a function of a time
-        self._jml_t = lambda t: self._ss_jml  # JML as function of time function
+        # For asymmetry
+        self._jml_t_bj = lambda t: self._ss_jml_bj
+        self._jml_t_rj = lambda t: self._ss_jml_rj
+
         self._ejections = {}  # Record of any ejection events
         for idx, ejn_t0 in enumerate(self.params['ejection']['t_0']):
-            self.add_ejection_event(ejn_t0 * con.year,
-                                    self._ss_jml *
-                                    self.params['ejection']['chi'][idx],
-                                    self.params['ejection']['hl'][idx] *
-                                    con.year)
+            which = self.params['ejection']['which'][idx]
+            if 'R' in which:
+                self.add_ejection_event(
+                    ejn_t0 * con.year,
+                    self._ss_jml_rj * self.params['ejection']['chi'][idx],
+                    self.params['ejection']['hl'][idx] * con.year,
+                    which='R'
+                )
+            if 'B' in which:
+                self.add_ejection_event(
+                    ejn_t0 * con.year,
+                    self._ss_jml_bj * self.params['ejection']['chi'][idx],
+                    self.params['ejection']['hl'][idx] * con.year,
+                    which='B'
+                )
 
         self._time = 0. * con.year  # Current time in jet model
 
@@ -270,6 +286,7 @@ class JetModel:
              ('x_0', format(p['properties']['x_0'], '.3f')),
              ('n_0', format(p['properties']['n_0'], '.3e') + ' cm^-3'),
              ('T_0', format(p['properties']['T_0'], '.0e') + ' K'),
+             ('f_R2B', format(self._ss_jml_rb_frac, '.2e')),
              ('i', format(p['geometry']['inc'], '+.1f') + ' deg'),
              ('theta', format(p['geometry']['pa'], '+.1f') + ' deg'),
              ('D', format(p['target']['dist'], '+.0f') + ' pc'),
@@ -363,19 +380,24 @@ class JetModel:
     def time(self, new_time: float):
         self._time = new_time
 
-    @property
-    def jml_t(self) -> Callable[[Union[float, np.ndarray]],
-                                Union[float, np.ndarray]]:
-        """Callable for jet-mass loss rate as a function of time, which is
+    def jml_t(self, which: str) -> Callable[[Union[float, np.ndarray]],
+                                             Union[float, np.ndarray]]:
+        """Callable for red jet-mass loss rate as a function of time, which is
         the callable's sole arg. [kg/s]"""
-        return self._jml_t
+        def func(which):
+            def inner_func(t):
+                jml = 0.
+                if 'R' in which:
+                    jml += self._jml_t_rj(t)
+                if 'B' in which:
+                    jml += self._jml_t_bj(t)
+                return jml
+            return inner_func
 
-    @jml_t.setter
-    def jml_t(self, new_jml_t: Callable[[Union[float, np.ndarray]],
-                                        Union[float, np.ndarray]]):
-        self._jml_t = new_jml_t
+        return func(which)
 
-    def add_ejection_event(self, t_0: float, peak_jml: float, half_life: float):
+    def add_ejection_event(self, t_0: float, peak_jml: float, half_life: float,
+                           which: str):
         """
         Add ejection event in the form of a Gaussian ejection profile as a
         function of time
@@ -388,12 +410,16 @@ class JetModel:
             Highest jet mass loss rate of ejection burst [kg/s]
         half_life
             Time for mass loss rate to halve during the burst [s]
+        which
+            Which jet to apply ejection burst to. Must be either 'B' or 'R' for
+            the blue or red jet, respectively
 
         Returns
         -------
         None.
 
         """
+        assert which in ('R', 'B')
 
         def func(fnc: Callable[[float], float], _t_0: float, _peak_jml: float,
                  _half_life: float) -> Callable[[float], float]:
@@ -415,16 +441,25 @@ class JetModel:
 
             def func2(t: float) -> float:
                 """Gaussian profiled ejection event"""
-                amp = _peak_jml - self._ss_jml
+                ss_jml = self._ss_jml_bj if which == 'B' else self._ss_jml_rj
+                amp = _peak_jml - ss_jml
                 sigma = _half_life * 2. / (2. * np.sqrt(2. * np.log(2.)))
                 return fnc(t) + amp * np.exp(-(t - _t_0) ** 2. /
                                              (2. * sigma ** 2.))
 
             return func2
 
-        self._jml_t = func(self._jml_t, t_0, peak_jml, half_life)
+        if 'R' in which.upper():
+            self._jml_t_rj = func(self._jml_t_rj, t_0, peak_jml, half_life)
 
-        record = {'t_0': t_0, 'peak_jml': peak_jml, 'half_life': half_life}
+        elif 'B' in which.upper():
+            self._jml_t_bj = func(self._jml_t_bj, t_0, peak_jml, half_life)
+        else:
+            raise ValueError('Help!')
+
+        record = {'t_0': t_0, 'peak_jml': peak_jml, 'half_life': half_life,
+                  'which': which}
+
         self._ejections[str(len(self._ejections) + 1)] = record
 
     @property
@@ -453,7 +488,7 @@ class JetModel:
     @property
     def grid(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Array of cell grid coordinates (in au) of shape (nx, ny, nz).
+        Array of cell grid cartesian coordinates (in au) of shape (nx, ny, nz).
         Coordinates are of the bottom, left, front cell corners in au.
         """
         if self._grid:
@@ -748,57 +783,57 @@ class JetModel:
 
         return self._areas
 
-    @property
-    def mass(self) -> np.ndarray:
-        if self._m is not None:
-            return self._m
-
-        w_0 = self.params['geometry']['w_0'] / self.params['grid']['c_size']
-        r_0 = self.params['geometry']['r_0'] / self.params['grid']['c_size']
-        eps = self.params['geometry']['epsilon']
-
-        # Mass of slice with z-width == 1 full cell
-        mass_full_slice = self._ss_jml * (self.csize * con.au /  # kg
-                                          (self.params['properties'][
-                                               'v_0'] * 1e3))
-
-        ms = np.zeros(np.shape(self.fill_factor))
-        constant = np.pi * w_0 ** 2. / ((2. * eps + 1.) * r_0 ** (2. * eps))
-
-        for idz, z in enumerate(self.grid[2][0][0] / self.csize):
-            z = np.round(z)
-            n_z = int(np.min(np.abs([z, z + 1])))
-            if n_z > r_0:
-                vol_zlayer = constant * ((n_z + 1.) ** (2. * eps + 1) -
-                                         (n_z + 0.) ** (2. * eps + 1))
-                mass_slice = mass_full_slice
-            elif (n_z + 1) >= r_0:
-                vol_zlayer = constant * ((n_z + 1.) ** (2. * eps + 1) -
-                                         r_0 ** (2. * eps + 1))
-                mass_slice = mass_full_slice * (n_z + 1. - r_0)
-            else:
-                # vol_zlayer = 0.
-                # mass_slice = 0.
-                continue
-
-            ffs_zlayer = self.fill_factor[:, :, idz]
-            m_cell = mass_slice / vol_zlayer  # kg / cell
-            ms_zlayer = ffs_zlayer * m_cell
-
-            ms[:, :, idz] = ms_zlayer
-
-        ms = (self.number_density * (self.csize * con.au * 1e2) ** 3. *
-              self.params['properties']['mu'] * mphys.atomic_mass('H') *
-              self.fill_factor)
-
-        ms = np.where(self.fill_factor > 0, ms, np.NaN)
-        self._m = ms
-
-        return self._m
-
-    @mass.setter
-    def mass(self, new_ms: np.ndarray):
-        self._m = new_ms
+    # @property
+    # def mass(self) -> np.ndarray:
+    #     if self._m is not None:
+    #         return self._m
+    #
+    #     w_0 = self.params['geometry']['w_0'] / self.params['grid']['c_size']
+    #     r_0 = self.params['geometry']['r_0'] / self.params['grid']['c_size']
+    #     eps = self.params['geometry']['epsilon']
+    #
+    #     # Mass of slice with z-width == 1 full cell
+    #     mass_full_slice = (self._ss_jml_bj *
+    #                        (self.csize * con.au /
+    #                         (self.params['properties']['v_0'] * 1e3)))
+    #
+    #     ms = np.zeros(np.shape(self.fill_factor))
+    #     constant = np.pi * w_0 ** 2. / ((2. * eps + 1.) * r_0 ** (2. * eps))
+    #
+    #     for idz, z in enumerate(self.grid[2][0][0] / self.csize):
+    #         z = np.round(z)
+    #         n_z = int(np.min(np.abs([z, z + 1])))
+    #         if n_z > r_0:
+    #             vol_zlayer = constant * ((n_z + 1.) ** (2. * eps + 1) -
+    #                                      (n_z + 0.) ** (2. * eps + 1))
+    #             mass_slice = mass_full_slice
+    #         elif (n_z + 1) >= r_0:
+    #             vol_zlayer = constant * ((n_z + 1.) ** (2. * eps + 1) -
+    #                                      r_0 ** (2. * eps + 1))
+    #             mass_slice = mass_full_slice * (n_z + 1. - r_0)
+    #         else:
+    #             # vol_zlayer = 0.
+    #             # mass_slice = 0.
+    #             continue
+    #
+    #         ffs_zlayer = self.fill_factor[:, :, idz]
+    #         m_cell = mass_slice / vol_zlayer  # kg / cell
+    #         ms_zlayer = ffs_zlayer * m_cell
+    #
+    #         ms[:, :, idz] = ms_zlayer
+    #
+    #     ms = (self.number_density * (self.csize * con.au * 1e2) ** 3. *
+    #           self.params['properties']['mu'] * mphys.atomic_mass('H') *
+    #           self.fill_factor)
+    #
+    #     ms = np.where(self.fill_factor > 0, ms, np.NaN)
+    #     self._m = ms
+    #
+    #     return self._m
+    #
+    # @mass.setter
+    # def mass(self, new_ms: np.ndarray):
+    #     self._m = new_ms
 
     @property
     def ts(self) -> np.ndarray:
@@ -828,7 +863,11 @@ class JetModel:
         """
         Chi factor (the burst factor) as a function of position.
         """
-        return self.jml_t(self.ts) / self._ss_jml
+        chi_xyz = np.where(self.rr < 0,
+                           self._jml_t_rj(self.ts) / self._ss_jml_rj,
+                           self._jml_t_bj(self.ts) / self._ss_jml_bj)
+
+        return chi_xyz
 
     @property
     def number_density(self) -> np.ndarray:
@@ -852,14 +891,12 @@ class JetModel:
         nd = np.where(self.fill_factor > 0, nd, np.NaN)
         nd = np.where(nd == 0, np.NaN, nd)
 
-        self.number_density = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN,
-                                            neginf=np.NaN)
+        # For asymmetric mass loss
+        nd = np.where(self.rr < 0, nd * self._ss_jml_rb_frac, nd)
+
+        self._nd = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN, neginf=np.NaN)
 
         return self.number_density
-
-    @number_density.setter
-    def number_density(self, new_nds: np.ndarray):
-        self._nd = new_nds
 
     @property
     def mass_density(self) -> np.ndarray:
@@ -1651,8 +1688,18 @@ class JetModel:
         return self._ejections
 
     @property
-    def ss_jml(self):
-        return self._ss_jml
+    def _ss_jml(self):
+        pass
+
+    def ss_jml(self, which: str):
+        if which == 'R':
+            return self._ss_jml_rj
+        elif which == 'B':
+            return self._ss_jml_bj
+        elif 'R' in which and 'B' in which:
+            return self._ss_jml_rj + self._ss_jml_bj
+        else:
+            raise ValueError("which must be one of 'R', 'B', or 'RB'")
 
     def save(self, filename):
         ps = {'params': self._params,
@@ -1957,13 +2004,13 @@ class Pipeline:
         params = loaded["params"]
 
         if 'log' in loaded:
-            new_modelrun = cls.__init__(jm_, params, log=loaded['log'])
+            new_modelrun = cls(jm_, params, log=loaded['log'])
         else:
             dcy = os.path.dirname(os.path.expanduser(loaded['model_file']))
             log_file = os.sep.join([dcy,
                                     os.path.basename(load_file).split('.')[0]
                                     + '.log'])
-            new_modelrun = cls.__init__(jm_, params, log=logger.Log(log_file))
+            new_modelrun = cls(jm_, params, log=logger.Log(log_file))
 
         new_modelrun.runs = loaded["runs"]
 
@@ -2715,7 +2762,7 @@ class Pipeline:
 
                 if run.obs_type == 'continuum':
                     specmode = 'mfs'
-                    restfreq = tasks.Tclean.DEFAULTS['restfreq'][1]
+                    restfreq = tasks.Tclean._DEFAULTS['restfreq'][1]
                 else:
                     specmode = 'cube'
                     restfreq = [str(run.freq) + 'Hz']
@@ -3081,7 +3128,7 @@ class Pipeline:
                             norm=im_tau.norm)
 
         em_min = np.nanpercentile(ems, percentile)
-        im_EM = r_ax.imshow(ems,
+        im_em = r_ax.imshow(ems,
                             norm=LogNorm(vmin=em_min,
                                          vmax=np.nanmax(ems)),
                             extent=(-x_extent / 2., x_extent / 2.,
@@ -3091,7 +3138,7 @@ class Pipeline:
         pfunc.make_colorbar(r_cax, np.nanmax(ems), cmin=em_min,
                             position='right', orientation='vertical',
                             numlevels=50, colmap='cividis',
-                            norm=im_EM.norm)
+                            norm=im_em.norm)
 
         axes = [l_ax, m_ax, r_ax]
         caxes = [l_cax, m_cax, r_cax]
@@ -3141,11 +3188,8 @@ class Pointing(object):
     Class to handle a single pointing and all of its information
     """
 
-    def __init__(self, time, ra, dec, duration, epoch='J2000'):
-        import astropy.units as u
-        from astropy.coordinates import SkyCoord
-
-        self._time = time
+    def __init__(self, time_, ra, dec, duration, epoch='J2000'):
+        self._time = time_
         self._duration = duration
 
         if epoch == 'J2000':
@@ -3192,12 +3236,36 @@ class Pointing(object):
 
 if __name__ == '__main__':
     # import matplotlib.cm
-    # import matplotlib.pylab as plt
+    import matplotlib.pylab as plt
+    import RaJePy.plotting.functions as pfunc
 
-    param_dcy = os.sep.join([os.path.dirname(__file__), 'test', 'test_cases'])
-    jm = JetModel(os.sep.join([param_dcy, 'test1-model-params.py']))
-    pl = Pipeline(jm, os.sep.join([param_dcy, 'test1-pipeline-params.py']))
+    param_dcy = os.sep.join([os.path.dirname(__file__), 'files'])
+    jm = JetModel(os.sep.join([param_dcy, 'example-model-params.py']))
+    pl = Pipeline(jm, os.sep.join([param_dcy, 'example-pipeline-params.py']))
     cwdcy = os.path.expanduser('~')
+
+    pfunc.geometry_plot(jm, True)
+
+    plt.close('all')
+
+    data = np.sqrt(np.nanmean(np.abs(jm.rr) * jm.fill_factor,
+                              axis=jm.los_axis).T[::-1])
+    data *= np.sign(np.nanmean(jm.rr * jm.fill_factor,
+                               axis=jm.los_axis).T[::-1])
+
+    data = np.nanmean(jm.rr * jm.fill_factor, axis=jm.los_axis).T[::-1]
+
+    plt.imshow(data,
+               extent=(np.min(jm.xx), np.max(jm.xx) + jm.csize * 1.,
+                       np.min(jm.zz), np.max(jm.zz) + jm.csize * 1.),
+               cmap='coolwarm_r')
+
+    # plt.imshow(np.nanmean(jm.rr * jm.fill_factor, axis=0).T,
+    #            extent=(np.min(jm.yy), np.max(jm.yy) + jm.csize * 1.,
+    #                    np.min(jm.zz), np.max(jm.zz) + jm.csize * 1.))
+
+    plt.show()
+
     # pl.execute(simobserve=False, resume=False)
     # plotf.plot_geometry(jm, savefig=os.sep.join([cwdcy, 'Desktop',
     #                                              'geometry_plot.pdf']),

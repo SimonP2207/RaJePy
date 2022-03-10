@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-from typing import Union
+import os
+from pathlib import Path
+from typing import Union, Tuple
 import numpy as np
 import scipy.constants as con
 import matplotlib.axes
@@ -265,7 +267,8 @@ def plot_mass_volume_slices(jm: 'JetModel', show_plot: bool = False,
     vslices = np.nansum(np.nansum(vcells, axis=1), axis=1)
 
     # Calculate mass density of cells (in kg m^-3)
-    mdcells = jm.number_density * jm.params['properties']['mu'] * mphys.atomic_mass("H") * 1e6
+    mdcells = (jm.number_density * jm.params['properties']['mu'] *
+               mphys.atomic_mass("H") * 1e6)
 
     # Calculate cell masses
     mcells = mdcells * vcells
@@ -862,7 +865,7 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
                      ax: matplotlib.axes.Axes = None, show_plot: bool = False,
                      savefig: Union[bool, str] = False):
     """
-    Plot ejection profile using matlplotlib5
+    Plot ejection profile using matlplotlib
 
     Parameters
     ----------
@@ -898,6 +901,7 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
 
     t_0s = [jm.ejections[_]['t_0'] for _ in jm.ejections]
     hls = [jm.ejections[_]['half_life'] for _ in jm.ejections]
+    which = [jm.ejections[_]['which'] for _ in jm.ejections]
 
     if len(t_0s) > 0 and len(hls) > 0:
         # Plot either 5 half-lives away from first/last existing burst, or from
@@ -915,29 +919,57 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
             t_max = np.nanmax([np.nanmax(run_years) + 1., 10.])
 
     times = np.linspace(t_min, t_max, 1000)
-    jmls = jm.jml_t(times)
+    lc_both = 'grey'
+    lc_bj = 'b'
+    lc_rj = 'r'
+
+    jml_t_both = jm.jml_t('RB')
+    jml_t_rj = jm.jml_t('R')
+    jml_t_bj = jm.jml_t('B')
+
+    jmls_both = jml_t_both(times)
+    jmls_rj = jml_t_rj(times)
+    jmls_bj = jml_t_bj(times)
 
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(cfg.plots['dims']['text'],
                                               cfg.plots['dims']['column']))
+    else:
+        fig = plt.gcf()
 
-    ax.plot(times / con.year, jmls * con.year / cnsts.MSOL, ls='-',
-            color='blue', lw=1, zorder=3, label=r'$\dot{m}_{\rm jet}$')
+    ax.plot(times / con.year, jmls_both * con.year / cnsts.MSOL, ls='-',
+            color=lc_both, lw=1, zorder=3, label=r'$\dot{m}_{\rm total}$')
+
+    ax.plot(times / con.year, jmls_rj * con.year / cnsts.MSOL, ls='--',
+            color=lc_rj, lw=1, zorder=3, label=r'$\dot{m}_{\rm red}$')
+
+    ax.plot(times / con.year, jmls_bj * con.year / cnsts.MSOL, ls='--',
+            color=lc_bj, lw=1, zorder=3, label=r'$\dot{m}_{\rm blue}$')
 
     if np.ptp(np.log10(ax.get_ylim())) < 1:
         ax.set_ylim(ax.get_ylim()[0],
                     10 ** np.ceil(np.log10(ax.get_ylim()[0]) + 1.))
 
-    ax.axhline(jm.ss_jml * con.year / 1.98847e30, 0, 1, ls=':',
-               color='red', lw=1, zorder=2,
-               label=r'$\dot{m}_{\rm jet}^{\rm ss}$')
+    ax.axhline(jm.ss_jml('RB') * con.year / 1.98847e30, 0, 1, ls=':',
+               color=lc_both, lw=1, zorder=2,
+               label=r'$\dot{m}_{\rm total}^{\rm ss}$')
 
-    ax.axvline(run_years, *ax.get_xlim(), ls='-.',
-               color='grey', lw=1, zorder=1,
-               label=r'$t_\mathrm{runs}$')
+    ax.axhline(jm.ss_jml('R') * con.year / 1.98847e30, 0, 1, ls=':',
+               color=lc_rj, lw=1, zorder=2,
+               label=r'$\dot{m}_{\rm red}^{\rm ss}$')
+
+    ax.axhline(jm.ss_jml('B') * con.year / 1.98847e30, 0, 1, ls=':',
+               color=lc_bj, lw=1, zorder=2,
+               label=r'$\dot{m}_{\rm blue}^{\rm ss}$')
+
+    # for idx, run_year in enumerate(run_years):
+    #     lc = 'grey'
+    #     ax.axvline(run_year / con.year, *ax.get_xlim(), ls='-.',
+    #                color=lc, lw=1, zorder=1,
+    #                label=r'$t_\mathrm{runs}$' if not idx else None)
 
     xunit = u.format.latex.Latex(times).to_string(u.year)
-    yunit = u.format.latex.Latex(jmls).to_string(u.solMass * u.year ** -1)
+    yunit = u.format.latex.Latex(jmls_both).to_string(u.solMass * u.year ** -1)
 
     xunit = r' \left[ ' + xunit.replace('$', '') + r'\right] $'
     yunit = r' \left[ ' + yunit.replace('$', '') + r'\right] $'
@@ -946,6 +978,11 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
     ax.set_ylabel(r"$ \dot{m}_{\rm jet}\," + yunit)
     ax.set_yscale('log')
     ax.set_xlim(np.array([t_min, t_max]) / con.year)
+    ax.legend(loc='upper right')
+
+    ax.tick_params(which='both', axis='both', direction='in',
+                   color='k', top=True, bottom=True, right=True,
+                   left=True)
 
     if savefig:
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
@@ -1158,8 +1195,9 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                             np.log10(np.max(xlims)), 100)
     flux_exp = []
     for freq in freqs_r86:
-        f = mphys.flux_expected_r86(pline.model, freq, l_z * 0.5)
-        flux_exp.append(f * 2.)  # for biconical jet
+        fr = mphys.flux_expected_r86(pline.model, freq, 'R', l_z * 0.5)
+        fb = mphys.flux_expected_r86(pline.model, freq, 'B', l_z * 0.5)
+        flux_exp.append(fr + fb)  # for biconical jet
 
     alphas_r86 = []
     for n in np.arange(1, len(freqs_r86)):
@@ -1184,8 +1222,9 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
         ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
                    zorder=1)
         ax1.loglog(freqs_r86,
-                   mphys.approx_flux_expected_r86(pline.model, freqs_r86) *
-                   2., color='gray', ls='-.', lw=2, zorder=1)
+                   mphys.approx_flux_expected_r86(pline.model, freqs_r86, 'R') +
+                   mphys.approx_flux_expected_r86(pline.model, freqs_r86, 'B'),
+                   color='gray', ls='-.', lw=2, zorder=1)
     ax1.set_xlim(xlims)
     ax2.set_ylim(-0.2, 2.1)
     equalise_axes(ax1, fix_x=False)
@@ -1217,3 +1256,164 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                     metadata=pdf_metadata, dpi=300)
     return None
 
+
+def load_fits_hdr_and_data(fits_file: str) -> Tuple[np.ndarray, np.ndarray]:
+    from astropy.io import fits
+
+    hdulist = fits.open(fits_file)
+
+    if len(hdulist) > 1:
+        raise NotImplementedError(f"{fits_file} has hdulist of len > 1 "
+                                  f"({len(hdulist)})")
+
+    hdulist = hdulist[0]
+
+    return hdulist.header, hdulist.data
+
+
+def timelapse_animation(pline: 'Pipeline', tscop: Tuple[str, str], freq: float,
+                        save_file: str, vmin: Union[None, float] = None,
+                        vmax: Union[None, float] = None):
+    from matplotlib.gridspec import GridSpec
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.animation import FuncAnimation
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    jm = pline.model
+
+    region = (+jm.params['grid']['l_z'] / 2, -jm.params['grid']['l_z'] / 2,
+              -jm.params['grid']['l_z'] / 2, +jm.params['grid']['l_z'] / 2)
+
+    # Get relevant runs
+    runs = []
+    for run in pline.runs:
+        if all(run.tscop == tscop):
+            if np.isclose(run.freq, freq, atol=1.):
+                runs.append(run)
+    runs = sorted(runs, key=lambda run: run.year)
+    times = [r.year for r in runs]
+    fits_files = [run.products['clean_image'] for run in runs]
+
+    hdrs = [load_fits_hdr_and_data(_)[0] for _ in fits_files]
+
+    if len(set([(_['NAXIS1'], _['NAXIS2'], _['CDELT2']) for _ in hdrs])) != 1:
+        raise ValueError("Images' dimensions do not all match")
+
+    n_pix_x, n_pix_y = hdrs[0]['NAXIS1'], hdrs[0]['NAXIS2']
+    cdelt = hdrs[0]['CDELT2'] * 3600.
+
+    xmin, xmax = [_ * n_pix_x * cdelt / 2. for _ in (1, -1)]
+    ymin, ymax = [_ * n_pix_y * cdelt / 2. for _ in (-1, 1)]
+
+    xx, yy = np.meshgrid(np.linspace(xmin, xmax, n_pix_x),
+                         np.linspace(ymin, ymax, n_pix_y)[::-1])
+
+    levs = np.array([-3, 3, 5, 7, 10, 20, 40, 80, 160, 320])
+
+    calc_vmin, calc_vmax = False, False
+    if vmin is None:
+        calc_vmin = True
+
+    if vmax is None:
+        calc_vmax = True
+
+    vmin = +np.inf if not vmin else vmin
+    vmax = -np.inf if not vmax else vmax
+    std = +np.inf
+    for fits_file in fits_files:
+        im_data = load_fits_hdr_and_data(fits_file)[1]
+        im_min = np.nanmin(im_data)
+        im_max = np.nanmax(im_data)
+        im_std = np.nanstd(im_data)
+        if im_min < vmin and calc_vmin:
+            vmin = im_min
+        if im_max > vmax and calc_vmax:
+            vmax = im_max
+        if im_std < std:
+            std = im_std
+
+    # Plotting commands
+    plt.close('all')
+
+    ax_width = 4.
+    fig = plt.figure(figsize=(ax_width * 2.1, ax_width * 1.1))
+
+    gs = GridSpec(2, 2, figure=fig, hspace=0., wspace=0.1,
+                  height_ratios=(1., 10.))
+
+    cax = fig.add_subplot(gs[0, :1])
+    ax1 = fig.add_subplot(gs[1, :1])
+    ax2 = fig.add_subplot(gs[1, 1:])
+
+    norm = Normalize(vmin=vmin * 1e6, vmax=vmax * 1e6)
+    cmap = 'plasma'
+    plt.colorbar(ScalarMappable(norm=norm, cmap=cmap), cax=cax,
+                 orientation='horizontal')
+    cax.xaxis.tick_top()
+    cax.tick_params(which='both', axis='both', direction='in',
+                    color='w', top=True, bottom=False, right=False,
+                    left=False)
+    cax.minorticks_on()
+    cax.text(0.5, 0.5, r'$\left[ \mu \mathrm{Jy\, beam^{-1}} \right]$',
+             color='w', transform=cax.transAxes, ha='center', va='center')
+
+    def format_plot():
+        ax1.set_xlim(region[:2])
+        ax1.set_ylim(region[2:])
+
+        ax1.set_yticks(ax1.get_xticks())
+        ax1.xaxis.set_minor_locator(AutoMinorLocator(5))
+        ax1.yaxis.set_minor_locator(AutoMinorLocator(5))
+
+        ax1.set_xlabel(r'$\Delta\,\mathrm{R.A.\ \left[arcsec\right]}$')
+        ax1.set_ylabel(r'$\Delta\,\mathrm{Dec.\ \left[arcsec\right]}$')
+
+        ax1.tick_params(which='both', axis='both', direction='in',
+                        color='white', top=True, bottom=True, right=True,
+                        left=True)
+        ax2.yaxis.set_label_position("right")
+        ax2.yaxis.tick_right()
+        ax2.tick_params(which='both', axis='both', direction='in',
+                        color='k', top=True, bottom=True, right=True,
+                        left=True)
+
+    def animate(i):
+        ax1.clear()
+        ax2.clear()
+
+        im_data = load_fits_hdr_and_data(fits_files[i])[1]
+        while len(np.shape(im_data)) > 2:
+            im_data = im_data[0]
+
+        img = ax1.imshow(im_data[::-1, :],
+                         vmin=vmin, vmax=vmax, cmap=cmap,
+                         extent=(xmin, xmax, ymin, ymax))
+
+        ax1.contour(xx, yy, img.get_array(), colors='w',
+                    levels=levs * std, linewidths=0.5)
+
+        ax1.text(0.95, 0.95, rf"$t = {times[i]:.2f}{{\rm yr}}$",
+                 color='w', ha='right', va='top', transform=ax1.transAxes)
+
+        jml_profile_plot(pline, ax2)
+        ax2.axvline(times[i], color='cornflowerblue', zorder=1)
+
+        format_plot()
+
+    format_plot()
+    anim = FuncAnimation(fig, animate,
+                         frames=len(fits_files), interval=1 / 10. * 1000,
+                         blit=False, repeat=True)
+    # plt.tight_layout()
+    anim.save(save_file, fps=10)
+
+    return None
+
+
+if __name__ == '__main__':
+    from RaJePy import cfg, JetModel, Pipeline
+
+    pline = Pipeline.load_pipeline('/Users/simon.purser/Desktop/test_output_dcy2/pipeline.save')
+
+    timelapse_animation(pline, ('EMERLIN', '0'), 6e9, 'test.mp4')

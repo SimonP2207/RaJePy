@@ -7,7 +7,7 @@ from RaJePy.maths.physics import *
 MSOL = 1.989e30
 REL_ETOL = 1e-3  # Relative error tolerance as fraction of 'perfect' result
 
-class TestPhysics(unittest.TestCase):
+class TestGeometry(unittest.TestCase):
     # @classmethod
     # def setUpClass(cls):
     #     pass
