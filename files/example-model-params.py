@@ -43,7 +43,6 @@ params = {
                    },
     "properties": {"v_0": 150.,  # Ejection velocity [km/s]
                    "x_0": 0.1,  # Initial HII fraction
-                   "n_0": None,  # Initial density [cm^-3]
                    "T_0": 1E4,  # Temperature [K]
                    "mu": 1.3,  # Mean atomic weight [u]
                    "mlr_bj": 1e-7,  # BLUE jet steady-state MLR [Msol/yr]

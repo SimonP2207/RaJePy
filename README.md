@@ -39,48 +39,49 @@ For the model parameter file, a full-working example is given in `RaJePy/files/e
 import numpy as np
 
 params = {
-    "target": {"name": "test1",  # Jet/YSO/Model name
-               "ra": "04:31:34.07736",  # HH:MM:SS.SS...
-               "dec": "+18:08:04.9020",  # DD:MM:SS.SS...
+    "target": {"name": "test2",  # Jet/YSO/Model name
+               "ra": "04:31:34.07736",  # R.A. [HH:MM:SS.SS...]
+               "dec": "+18:08:04.9020",  # Declination [DD:MM:SS.SS...]
                "epoch": "J2000",  # Coordinate epoch, J2000 or B1950
-               "dist": 100.,  # Distance from observer, pc
-               "v_lsr": 6.2,  # System's local standard of rest velocity, km/s
-               "M_star": 0.55,  # Central object mass, M_sol
-               "R_1": .25,  # inner disc radii sourcing the jet, au
-               "R_2": 2.5,  # outer disc radii sourcing the jet, au
+               "dist": 120.,  # Distance from observer [pc]
+               "v_lsr": 6.2,  # System's local standard of rest velocity [km/s]
+               "M_star": 0.55,  # Central object mass [M_sol]
+               "R_1": .25,  # inner disc radii sourcing the jet [au]
+               "R_2": 2.5,  # outer disc radii sourcing the jet [au]
                },
     "grid": {"n_x": 50,  # No. of cells in x
              "n_y": 400,  # No. of cells in y
              "n_z": 50,  # No. of cells in z
-             "l_z": .5,  # Length of z-axis. Overrides n_x/n_y/n_z.
-             "c_size": 0.5,  # Cell size, au
+             "l_z": 2.,  # Length of z-axis. Overrides n_x/n_y/n_z
+             "c_size": 0.5,  # Cell size [au]
              },
     "geometry": {"epsilon": 7. / 9.,  # Jet width index
-                 "opang": 25.,  # Jet opening angle, deg
-                 "w_0": 1.,  # Half-width of jet base, au
-                 "r_0": 1.,  # Launching radius, au
-                 "inc": 90.,  # Inclination angle where 0 <= i <= 90, deg
-                 "pa": 70.,  # Blue (approaching) jet position angle, deg
-                 "rotation": "CCW",  # Jet-rotation sense, either "CCW" or "CW"
+                 "opang": 25.,  # Jet opening angle [deg]
+                 "w_0": 1.,  # Half-width of jet base [au]
+                 "r_0": 1.,  # Launching radius [au]
+                 "inc": 90.,  # Inclination angle where 0 <= i <= 90 [deg]
+                 "pa": 0.,  # BLUE (approaching) jet position angle [deg]
+                 "rotation": "CCW",  # Rotation sense, either "CCW" or "CW"
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
                    "q_T": 0.,  # Temperature index
                    "q_x": 0.,  # Ionisation fraction index
-                   "q^d_n": 0. / 8.,  # Cross-sectional density index
+                   "q^d_n": 0.,  # Cross-sectional density index
                    "q^d_T": 0.,  # Cross-sectional temperature index
-                   "q^d_v": 0.,  # Cross-sectional velocity index
+                   "q^d_v": 0.,  # Cross-sectional jet-velocity index
                    "q^d_x": 0.  # Cross-sectional ionisation fraction index
                    },
-    "properties": {"v_0": 150.,  # Ejection velocity, km/s
+    "properties": {"v_0": 150.,  # Ejection velocity [km/s]
                    "x_0": 0.1,  # Initial HII fraction
-                   "n_0": None,  # Initial density, cm^-3
-                   "T_0": 1E4,  # Temperature, K
-                   "mu": 1.3,  # Mean atomic weight, u
-                   "mlr": 1e-8,  # Msol / yr
+                   "T_0": 1E4,  # Temperature [K]
+                   "mu": 1.3,  # Mean atomic weight [u]
+                   "mlr_bj": 1e-7,  # BLUE jet steady-state MLR [Msol/yr]
+                   "mlr_rj": 5e-8,  # RED jet steady-state MLR [Msol/yr]
                    },
-    "ejection": {"t_0": np.array([0.5, 3.]),  # Peak times of bursts, yr
-                 "hl": np.array([0.25, 0.45]),  # Half-lives of bursts, yr
-                 "chi": np.array([2., 5.]),  # Burst factors
+    "ejection": {"t_0": np.array([0.5, 0.75, 1., 2.]),  # Peak times of bursts [yr]
+                 "hl": np.array([0.15, 0.15, 0.45, 0.5]),  # Half-lives of bursts [yr]
+                 "chi": np.array([5., 5., 2.5, 10.]),  # Burst factors
+                 "which": np.array(["R", "B", "B", "RB"])  # Which jet the burst relates to
                  }
     }
 
@@ -146,23 +147,24 @@ Power-law coefficients defining the physical model in velocity, temperature, ion
 ### Model-parameter section `'properties'`
 Jet physical parameter values
 
-| Parameter/key | Description                                              | Type          | Example |
-|---------------|----------------------------------------------------------|---------------|---------|
-| `"v_0"`       | Jet initial velocity (km/s)                              | `float`       | `500.`  |
-| `"x_0"`       | Initial jet ionisation fraction (0 < x_0 <= 1)                | `float`       | `0.1`   |
-| `"n_0"`       | Initial jet number density (per cubic cm)                | `float`, None | `1e9`   |
-| `"T_0"`       | Initial jet temperature (K)                              | `float`       | `1e4`   |
-| `"mu"`        | Mean atomic weight of jet (hydrogen atom mass)           | `float`       | `1.3`   |
-| `"mlr"`       | Jet mass loss rate (solar masses per yr)                 | `float`, None | `1e-5`  |
+| Parameter/key | Description                                    | Type          | Example |
+|---------------|------------------------------------------------|---------------|---------|
+| `"v_0"`       | Jet initial velocity (km/s)                    | `float`       | `500.`  |
+| `"x_0"`       | Initial jet ionisation fraction (0 < x_0 <= 1) | `float`       | `0.1`   |
+| `"T_0"`       | Initial jet temperature (K)                    | `float`       | `1e4`   |
+| `"mu"`        | Mean atomic weight of jet (hydrogen atom mass) | `float`       | `1.3`   |
+| `"mlr_bj"`    | Blue-jet mass loss rate (solar masses per yr)  | `float`, None | `1e-5`  |
+| `"mlr_rj"`    | Red-jet mass loss rate (solar masses per yr)   | `float`, None | `1e-5`  |
 
 ### Model-parameter section `'ejection'`
 Jet mass loss variability parameters. The number of bursts defined here does not impact code-performance and so complex mlr(t) profiles can be defined dependent upon requirements.
 
-| Parameter/key | Description                                                        | Type                        | Example                        |
-|---------------|--------------------------------------------------------------------|-----------------------------|--------------------------------|
-| `"t_0"`       | Burst(s) peak times (yr)                                           | `np.array` (dtype=float) | `np.array([0., 1., 2.])`    |
-| `"hl"`        | Burst(s) 'half-lives', i.e. FWHM in time (yr)                      | `np.array` (dtype=float) | `np.array([0.2, 0.1, 0.8])` |
-| `"chi"`       | Burst(s) factors (multiple of jet's steady state mass loss rate    | `np.array` (dtype=float) | `np.array([10., 5., 2.])`   |
+| Parameter/key | Description                                                            | Type                     | Example                       |
+|---------------|------------------------------------------------------------------------|--------------------------|-------------------------------|
+| `"t_0"`       | Burst(s) peak times (yr)                                               | `np.array` (dtype=float) | `np.array([0., 1., 2.])`      |
+| `"hl"`        | Burst(s) 'half-lives', i.e. FWHM in time (yr)                          | `np.array` (dtype=float) | `np.array([0.2, 0.1, 0.8])`   |
+| `"chi"`       | Burst(s) factors (multiple of jet's steady state mass loss rate        | `np.array` (dtype=float) | `np.array([10., 5., 2.])`     |
+| `"which"`     | Whether the burst is in the blue ('B'), red ('R'), or both ('RB') jets | `np.array` (dtype=str)   | `np.array(['R', 'B', 'RB'])`  |
 
 ## Pipeline parameter file
 For the pipeline parameter file, a full-working example is given in `RaJePy/files/example-pipeline-params.py` which contains the following:
@@ -213,30 +215,30 @@ This shows a python `dict` with 4 associated keys which are:
 ### Pipeline-parameter section `'continuum'`
 Imaging/pipeline parameters defining continuum radiative-transfer/synthetic observations are defined here. When executed, radiative transfer and/or synthetic observations are conducted at each value of `"times"`, for each value of `"freqs"`. For example, if `"times"` specified are 0, 1 and 10 years, whilst the observing frequencies are specified at 2, 10, 20 and 50 GHz, a total of 12 radiative transfer/synthetic observations will be conducted.
 
-| Parameter/key | Description                                                    | Type                                       | Example                                                                     |
-|---------------|----------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------|
-| `"times"`     | Observational times (yr)                                       | `np.array` with `dtype=float`           | `np.linspace(0., 5., 4)`                                                 |
-| `"freqs"`     | Observational intermediate frequencies (Hz)                                 | `np.array` with `dtype=float`           | `np.array([1e9, 5e9, 2e10, 5e10])`          
-| `"t_obs"`     | Total scan times (s)                                           | `np.array` with `dtype=int`             |                                                                             |
-| `"tscps"`     | Telescope names and configurations                             | `np.array` with `dtype=tuple(str, str)` | `np.array([('VLA', 'A'), ('EMERLIN', '0'), ('VLA', 'B'), ('VLA', 'C')])` |
-| `"t_ints"`    | Visibility integration times (s)                               | `np.array` with `dtype=int`             | `np.array([5, 3, 3, 2])`                                                 |
-| `"bws"`       | Bandwidths (Hz)                                                | `np.array` with `dtype=float`           | `np.array([0.5e9, 2e9, 2e9, 4e9])`                                       |
-| `"chanws"`    | Channel widths within bandwidth (Hz)                           | `np.array` with `dtype=int`             | `np.array([1, 1, 1, 1])`                                                 |
+| Parameter/key | Description                                 | Type                              | Example                                                                  |
+|---------------|---------------------------------------------|-----------------------------------|--------------------------------------------------------------------------|
+| `"times"`     | Observational times (yr)                    | `np.array(dtype=float)`           | `np.linspace(0., 5., 4)`                                                 |
+| `"freqs"`     | Observational intermediate frequencies (Hz) | `np.array(dtype=float)`           | `np.array([1e9, 5e9, 2e10, 5e10])`                                       |
+| `"t_obs"`     | Total scan times (s)                        | `np.array(dtype=int)`             | `np.array([3600, 1800, 900, 450])`                                       |
+| `"tscps"`     | Telescope names and configurations          | `np.array(dtype=tuple(str, str))` | `np.array([('VLA', 'A'), ('EMERLIN', '0'), ('VLA', 'B'), ('VLA', 'C')])` |
+| `"t_ints"`    | Visibility integration times (s)            | `np.array(dtype=int)`             | `np.array([5, 3, 3, 2])`                                                 |
+| `"bws"`       | Bandwidths (Hz)                             | `np.array(dtype=float)`           | `np.array([0.5e9, 2e9, 2e9, 4e9])`                                       |
+| `"chanws"`    | Channel widths within bandwidth (Hz)        | `np.array(dtype=int)`             | `np.array([1, 1, 1, 1])`                                                 |
 
 **NB** - Specified arrays for `"freqs"`, `"t_obs"`, `"tscps"`, `"t_int"`, `"bws"` and `"chanws"` should all have the same length. Array values at the same indices in each of those arrays are used in combination to define the observational parameters for one run.
 
 ### Pipeline-parameter section `'rrls'`
 Imaging/pipeline parameters defining radio recombination line radiative-transfer/synthetic observations are defined here. When executed, radiative transfer and/or synthetic observations are conducted at each value of `"times"`, for each value of `"lines"`. For example, if `"times"` specified are 0, 1 and 10 years, whilst the observed RRL lines are specified as H48a and H58a, a total of 6 radiative transfer/synthetic observations will be conducted.
 
-| Parameter/key | Description                                                    | Type                                       | Example                                                                     |
-|---------------|----------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------|
-| `"times"`     | Observational times (yr)                                       | `np.array` with `dtype=float`           | `np.linspace(0., 5., 4)`                                                 |
-| `"lines"`     | Radio recombination lines for observing | `np.array` with `dtype=str`           | `np.array(['H56a', 'H42a', 'H76a'])`        
-| `"t_obs"`     | Total scan times (s)                                           | `np.array` with `dtype=int`             |                                                                             |
-| `"tscps"`     | Telescope names and configurations                             | `np.array` with `dtype=tuple(str, str)` | `np.array([('VLA', 'A'), ('EMERLIN', '0'), ('VLA', 'B'), ('VLA', 'C')])` |
-| `"t_ints"`    | Visibility integration times (s)                               | `np.array` with `dtype=int`             | `np.array([5, 3, 3, 2])`                                                 |
-| `"bws"`       | Bandwidths (Hz)                                                | `np.array` with `dtype=float`           | `np.array([0.5e9, 2e9, 2e9, 4e9])`                                       |
-| `"chanws"`    | Channel widths within bandwidth (Hz)                           | `np.array` with `dtype=int`             | `np.array([1, 1, 1, 1])`                                                 |                                   |
+| Parameter/key | Description                              | Type                                    | Example                                                                  |
+|---------------|------------------------------------------|-----------------------------------------|--------------------------------------------------------------------------|
+| `"times"`     | Observational times (yr)                 | `np.array` with `dtype=float`           | `np.linspace(0., 5., 4)`                                                 |
+| `"lines"`     | Radio recombination lines for observing  | `np.array` with `dtype=str`             | `np.array(['H56a', 'H42a', 'H76a'])`                                     |
+| `"t_obs"`     | Total scan times (s)                     | `np.array` with `dtype=int`             | `np.array([3600, 1800, 900, 450])`                                       |
+| `"tscps"`     | Telescope names and configurations       | `np.array` with `dtype=tuple(str, str)` | `np.array([('VLA', 'A'), ('EMERLIN', '0'), ('VLA', 'B'), ('VLA', 'C')])` |
+| `"t_ints"`    | Visibility integration times (s)         | `np.array` with `dtype=int`             | `np.array([5, 3, 3, 2])`                                                 |
+| `"bws"`       | Bandwidths (Hz)                          | `np.array` with `dtype=float`           | `np.array([0.5e9, 2e9, 2e9, 4e9])`                                       |
+| `"chanws"`    | Channel widths within bandwidth (Hz)     | `np.array` with `dtype=int`             | `np.array([1, 1, 1, 1])`                                                 |                                   |
 
 RaJePy automatically calculates the central observing frequency based upon the RRL(s) defined above. See the [splatalogue](https://splatalogue.online//sp_basic.php?el1=el1&el2=el2&ls1=ls1&ls5=ls5&displayRecomb=displayRecomb&displayLovas=displayLovas&displaySLAIM=displaySLAIM&displayJPL=displayJPL&displayCDMS=displayCDMS&displayToyaMA=displayToyaMA&displayOSU=displayOSU&displayLisa=displayLisa&displayRFI=displayRFI&data_version=v3.0&no_atmospheric=no_atmospheric&no_potential=no_potential&no_probable=no_probable&include_only_nrao=include_only_nrao&show_orderedfreq_only=show_orderedfreq_only&chemical_name=Hydrogen+Recombination+Line&band%5B%5D=any&redshift=&energy_range_from=&energy_range_to=&energy_range_type=el_cm1&frequency_units=GHz&from=0.01&to=1000&submit=Search) for useful RRL information.
 
@@ -372,5 +374,6 @@ Python >= 3.6 (f-string dependence)
 - ~~Incorporate inclination into jet model~~
 - ~~Incorporate position angle into jet model~~
 - ~~Implement more than one channel across bandwidth for more accurate multi-frequency synthesis~~
+- ~~Incorporate asymmetric mass-loss for bursts and steady-state mass loss rates~~
 - Incorporate non-LTE effects into RRL radiative transfer calculations
 - Parallelise code, especially different synthetic observations and model calculations
