@@ -158,7 +158,6 @@ def check_model_params(params):
                            ('q^d_x', float)),
             'properties': (('v_0', float),
                            ('x_0', float),
-                           ('n_0', float),
                            ('T_0', float),
                            ('mu', float),
                            ('mlr_bj', float),

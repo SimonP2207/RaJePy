@@ -23,7 +23,7 @@ class TestJetModel(unittest.TestCase):
                 self.model_params
             ))[0]
             dims = JetModel.lz_to_grid_dims(self.model_params[test_case])
-            self.assertEqual(dims, correct_dims[test_case],
+            self.assertEqual(correct_dims[test_case], dims,
                              f"Model param file is {test_case_file}")
 
 

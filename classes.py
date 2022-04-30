@@ -18,6 +18,7 @@ from typing import Union, Callable, List, Tuple, Dict
 
 import numpy.typing as npt
 import numpy as np
+import dask.array as da
 import tabulate
 import astropy.units as u
 import scipy.constants as con
@@ -101,6 +102,11 @@ class JetModel:
         rmax_au, _, __ = mgeom.xyz_to_rwp(xmax_au, ymax_au, zmax_au,
                                           params["geometry"]["inc"],
                                           params["geometry"]["pa"])
+        mr0 = mgeom.mod_r_0(params['geometry']['opang'],
+                            params['geometry']['epsilon'],
+                            params['geometry']['w_0'])
+        params["geometry"]["mod_r_0"] = mr0
+
         wmax_au = mgeom.w_r(rmax_au,
                             params["geometry"]["w_0"],
                             params["geometry"]["mod_r_0"],
@@ -284,7 +290,6 @@ class JetModel:
              ('r_0', format(p['geometry']['r_0'], '.2f') + ' au'),
              ('v_0', format(p['properties']['v_0'], '.0f') + ' km/s'),
              ('x_0', format(p['properties']['x_0'], '.3f')),
-             ('n_0', format(p['properties']['n_0'], '.3e') + ' cm^-3'),
              ('T_0', format(p['properties']['T_0'], '.0e') + ' K'),
              ('f_R2B', format(self._ss_jml_rb_frac, '.2e')),
              ('i', format(p['geometry']['inc'], '+.1f') + ' deg'),
@@ -466,9 +471,9 @@ class JetModel:
     def indices(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if self._idxs:
             return self._idxs
-        self._idxs = tuple(np.meshgrid(np.arange(self.nx),
-                                       np.arange(self.ny),
-                                       np.arange(self.nz),
+        self._idxs = tuple(np.meshgrid(np.arange(self.nx, dtype=np.uint16),
+                                       np.arange(self.ny, dtype=np.uint16),
+                                       np.arange(self.nz, dtype=np.uint16),
                                        indexing=self._arr_indexing))
 
         return self._idxs
@@ -578,6 +583,74 @@ class JetModel:
         if self._ff is not None:
             return self._ff
 
+
+        if self.log:
+            self._log.add_entry(mtype="INFO",
+                                entry="Calculating cells' fill "
+                                      "factors/projected areas")
+
+        else:
+            print("INFO: Calculating cells' fill factors/projected areas")
+
+        # Assign to local variables for readability
+        w_0 = self.params['geometry']['w_0']
+        r_0 = self.params['geometry']['r_0']
+        mod_r_0 = self.params['geometry']['mod_r_0']
+        eps = self.params['geometry']['epsilon']
+        inc = self.params['geometry']['inc']
+        pa = self.params['geometry']['pa']
+        cs = self.csize
+
+        ffs = np.zeros(np.shape(self.xx))
+        areas = np.zeros(
+            np.shape(self.xx))  # Areas as projected on to the y-axis
+
+        then = time.time()
+
+        n_verts_inside = np.zeros(np.shape(self.xx), dtype=int)
+        verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
+                 (0., 0., cs), (cs, 0., cs), (0., cs, cs), (cs, cs, cs))
+
+        for dx, dy, dz in verts:
+            rv, wv = mgeom.xyz_to_rwp(self.xx + dx, self.yy + dy,
+                                      self.zz + dz, inc, pa)[:2]
+            wrv = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)
+            n_verts_inside = np.where((wrv >= wv) & (np.abs(rv) >= r_0),
+                                      n_verts_inside + 1, n_verts_inside)
+        ffs = np.where(n_verts_inside == 8, 1.0, ffs)
+        ffs = np.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
+        areas = np.where(0 < n_verts_inside, 1.0, areas)
+
+
+        now = time.time()
+        if self.log:
+            self.log.add_entry(mtype="INFO",
+                               entry=time.strftime('Finished in %Hh%Mm%Ss',
+                                                   time.gmtime(now - then)))
+        else:
+            print(time.strftime('INFO: Finished in %Hh%Mm%Ss',
+                                time.gmtime(now - then)))
+
+        # Included as there are some, presumed floating point errors giving
+        # fill factors of ~1e-15 on occasion
+        ffs = np.where(ffs > 1e-6, ffs, np.NaN)
+        areas = np.where(areas > 1e-6, areas, np.NaN)
+
+        self._ff = ffs
+        self._areas = areas
+
+        return self._ff
+
+    @property
+    def filsdl_factor(self) -> np.ndarray:
+        """
+        Calculate the fraction of each of the grid's cells falling within the
+        jet's hard boundary define by w(r) (see RaJePy.maths.geometry.w_r
+        method), or 'fill factors'
+        """
+        if self._ff is not None:
+            return self._ff
+
         # TODO: Have disabled grid reflection due to correction of
         #  mgeom.xyz_to_rwp method to handle inclinations and position angles in
         #  the astronomically correct sense. Therefore, need to propagate these
@@ -654,19 +727,28 @@ class JetModel:
         # progress = -1
         then = time.time()
 
-        n_verts_inside = np.zeros(np.shape(self.xx), dtype=int)
+        import multiprocessing as mp
+        ncpu = mp.cpu_count()
+        chunk_size = tuple([_ // (ncpu * 2) for _ in self.xx.shape])
+        n_verts_inside = da.zeros(np.shape(self.xx), chunks=chunk_size,
+                                  dtype=np.uint8)
         verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
                  (0., 0., cs), (cs, 0., cs), (0., cs, cs), (cs, cs, cs))
 
         for dx, dy, dz in verts:
-            rv, wv = mgeom.xyz_to_rwp(self.xx + dx, self.yy + dy,
-                                      self.zz + dz, inc, pa)[:2]
+            xx_vert = da.from_array(self.xx + dx, chunks=chunk_size)
+            yy_vert = da.from_array(self.yy + dy, chunks=chunk_size)
+            zz_vert = da.from_array(self.zz + dz, chunks=chunk_size)
+            rv, wv = mgeom.xyz_to_rwp(xx_vert, yy_vert, zz_vert, inc, pa)[:2]
             wrv = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)
-            n_verts_inside = np.where((wrv >= wv) & (np.abs(rv) >= r_0),
+            n_verts_inside = da.where((wrv >= wv) & (np.abs(rv) >= r_0),
                                       n_verts_inside + 1, n_verts_inside)
-        ffs = np.where(n_verts_inside == 8, 1.0, ffs)
-        ffs = np.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
-        areas = np.where(0 < n_verts_inside, 1.0, areas)
+
+        ffs = da.where(n_verts_inside == 8, 1.0, ffs)
+        ffs = da.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
+        areas = da.where(0 < n_verts_inside, 1.0, areas)
+
+
 
         # for idxy, yplane in enumerate(self.zz):
         #     for idxx, xrow in enumerate(yplane):
@@ -740,14 +822,7 @@ class JetModel:
         #                 s += '  h  m  s left'
         #             print('\r' + s, end='' if progress < 100 else '\n')
 
-        now = time.time()
-        if self.log:
-            self.log.add_entry(mtype="INFO",
-                               entry=time.strftime('Finished in %Hh%Mm%Ss',
-                                                   time.gmtime(now - then)))
-        else:
-            print(time.strftime('INFO: Finished in %Hh%Mm%Ss',
-                                time.gmtime(now - then)))
+
 
         # TODO: Have disabled grid reflection due to correction of
         #  mgeom.xyz_to_rwp method to handle inclinations and position angles in
@@ -760,11 +835,20 @@ class JetModel:
 
         # Included as there are some, presumed floating point errors giving
         # fill factors of ~1e-15 on occasion
-        ffs = np.where(ffs > 1e-6, ffs, np.NaN)
-        areas = np.where(areas > 1e-6, areas, np.NaN)
+        ffs = da.where(ffs > 1e-6, ffs, np.NaN)
+        areas = da.where(areas > 1e-6, areas, np.NaN)
 
-        self._ff = ffs
-        self._areas = areas
+        self._ff = ffs.compute()
+        self._areas = areas.compute()
+
+        now = time.time()
+        if self.log:
+            self.log.add_entry(mtype="INFO",
+                               entry=time.strftime('Finished in %Hh%Mm%Ss',
+                                                   time.gmtime(now - then)))
+        else:
+            print(time.strftime('INFO: Finished in %Hh%Mm%Ss',
+                                time.gmtime(now - then)))
 
         return self._ff
 

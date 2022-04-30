@@ -43,13 +43,14 @@ params = {
                    },
     "properties": {"v_0": 150.,  # Ejection velocity (km/s)
                    "x_0": 0.1,  # Initial HII fraction
-                   "n_0": None,  # Initial density (cm^-3)
                    "T_0": 1E4,  # Temperature (K)
                    "mu": 1.3,  # Mean atomic weight (m_H)
-                   "mlr": 1e-8,  # Msol / yr
+                   "mlr_bj": 1e-7,  # BLUE jet steady-state MLR [Msol/yr]
+                   "mlr_rj": 5e-8,  # RED jet steady-state MLR [Msol/yr]
                    },
     "ejection": {"t_0": np.array([0.5, 3.]),  # Peak times of bursts (yr)
                  "hl": np.array([0.25, 0.45]),  # Half-lives of bursts (yr)
                  "chi": np.array([2., 5.]),  # Burst factors
+                 "which": np.array(["R", "B", "B", "RB"])  # Which jet the burst relates to
                  }
     }

@@ -23,7 +23,7 @@ params = {
              "n_y": 400,  # No. of cells in y
              "n_z": 50,  # No. of cells in z
              "l_z": 2.,  # Length of z-axis. Overrides n_x/n_y/n_z
-             "c_size": 0.5,  # Cell size [au]
+             "c_size": 0.2,  # Cell size [au]
              },
     "geometry": {"epsilon": 7. / 9.,  # Jet width index
                  "opang": 25.,  # Jet opening angle [deg]

@@ -12,7 +12,7 @@ import os
 import numpy as np
 
 params = {'min_el':    20.,  # Minimum elevation for synthetic observations, deg
-          'dcys':      {"model_dcy": os.sep.join([os.path.expanduser('~'), 'Desktop', 'test_output_dcy2'])},  # Output root directory
+          'dcys':      {"model_dcy": os.sep.join([os.path.expanduser('~'), 'Desktop', 'test_output_rajepy'])},  # Output root directory
           # Continuum observations
           'continuum': {'times':  np.linspace(0., 5., 24 * 5 + 1),  # Model times, yr
                         'freqs':  np.array([6.]) * 1e9,  # Frequencies of observations, Hz
