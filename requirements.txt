@@ -5,5 +5,6 @@ mpmath~=1.2.1
 uncertainties~=3.1.6
 astropy~=4.3.1
 matplotlib~=3.4.3
-setuptools~=57.4.0
 tabulate~=0.8.9
+dask~=2022.4.2
+tqdm~=4.64.0

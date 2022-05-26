@@ -11,6 +11,8 @@ from matplotlib.colors import LogNorm, SymLogNorm, Normalize
 from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 import astropy.units as u
+
+
 # from RaJePy import cnsts
 # from RaJePy import JetModel
 # from RaJePy import _config as cfg
@@ -121,7 +123,8 @@ def make_colorbar(cax, cmax, cmin=0, position='right', orientation='vertical',
         if e < len(colbar) - 1:
             if isinstance(norm, LogNorm):
                 levs = np.concatenate((levs[:-1], np.linspace(10 ** colbar[e],
-                                                              10 ** colbar[e + 1],
+                                                              10 ** colbar[
+                                                                  e + 1],
                                                               numlevels)))
             else:
                 levs = np.concatenate((levs[:-1], np.linspace(colbar[e],
@@ -152,18 +155,22 @@ def make_colorbar(cax, cmax, cmin=0, position='right', orientation='vertical',
 
     if isinstance(norm, LogNorm):
         if orientation == 'vertical':
-            cax.set_yscale('log')  # , subsy=minticks if isinstance(minticks, list) else [1, 2, 3, 4, 5, 6, 7, 8, 9])
+            cax.set_yscale(
+                'log')  # , subsy=minticks if isinstance(minticks, list) else [1, 2, 3, 4, 5, 6, 7, 8, 9])
         elif orientation == 'horizontal':
-            cax.set_xscale('log')  # , subsy=minticks if isinstance(minticks, list) else [1, 2, 3, 4, 5, 6, 7, 8, 9])
+            cax.set_xscale(
+                'log')  # , subsy=minticks if isinstance(minticks, list) else [1, 2, 3, 4, 5, 6, 7, 8, 9])
     else:
         if isinstance(maxticks, list):
             axis.set_ticks(maxticks)
-        elif isinstance(maxticks, (AutoLocator, AutoMinorLocator, MultipleLocator, MaxNLocator)):
+        elif isinstance(maxticks, (
+        AutoLocator, AutoMinorLocator, MultipleLocator, MaxNLocator)):
             axis.set_major_locator(maxticks)
 
         if isinstance(minticks, list):
             axis.set_ticks(minticks, minor=True)
-        elif isinstance(minticks, (AutoLocator, AutoMinorLocator, MultipleLocator, MaxNLocator)):
+        elif isinstance(minticks, (
+        AutoLocator, AutoMinorLocator, MultipleLocator, MaxNLocator)):
             axis.set_minor_locator(minticks)
         elif minticks:
             axis.set_minor_locator(AutoMinorLocator())
@@ -1018,7 +1025,8 @@ def geometry_plot(jm: 'JetModel', show_plot: bool = False,
 
     data = jm.fill_factor
 
-    sum_data_x = np.nansum(data, axis=[_ for _ in (0, 1) if _ != jm.los_axis][0])
+    sum_data_x = np.nansum(data,
+                           axis=[_ for _ in (0, 1) if _ != jm.los_axis][0])
     sum_data_y = np.nansum(data, axis=jm.los_axis)
     sum_data_z = np.nansum(data, axis=2)
 
@@ -1079,7 +1087,8 @@ def geometry_plot(jm: 'JetModel', show_plot: bool = False,
                      transform=ax.transAxes, color=color, overhang=0.2, lw=1,
                      head_width=0.02)
             ax.annotate((xlab, ylab, zlab)[i],
-                        xy=pos, xytext=(pos[0] + dx * length, pos[1] + dy * length),
+                        xy=pos,
+                        xytext=(pos[0] + dx * length, pos[1] + dy * length),
                         xycoords='axes fraction', textcoords='axes fraction',
                         color=color, ha=('left', 'center', 'left')[i],
                         va=('center', 'bottom', 'bottom')[i])
@@ -1138,7 +1147,7 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                 freqs.append(run.freq)
 
                 # imfit fluxes
-                if run.results['imfit'] is not None:
+                if run.simobserve and run.results['imfit'] is not None:
                     flux_imfit = run.results['imfit']['I']['val']
                     eflux_imfit = run.results['imfit']['Ierr']['val']
                     fluxes_imfit.append(flux_imfit)
@@ -1168,8 +1177,8 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                                  fluxes_imfit[n - 1] * c)) ** 2.)
         ealphas_imfit.append(ealpha)
 
-    l_z = pline.model.nz * pline.model.csize / \
-          pline.model.params['target']['dist']
+    l_z = (pline.model.nz * pline.model.csize /
+           pline.model.params['target']['dist'])
 
     plt.close('all')
 
@@ -1188,8 +1197,9 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
     ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
              mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
 
-    ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
-                 ls='None', capsize=2)
+    if len(alphas_imfit) > 0:
+        ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
+                     ls='None', capsize=2)
 
     freqs_r86 = np.logspace(np.log10(np.min(xlims)),
                             np.log10(np.max(xlims)), 100)
@@ -1215,8 +1225,10 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
 
     ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
                zorder=3, marker='o', markersize=5)
-    ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
-                 ls='None', capsize=2)
+
+    if len(fluxes_imfit) > 0:
+        ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
+                     ls='None', capsize=2)
 
     if plot_reynolds:
         ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
@@ -1414,6 +1426,7 @@ def timelapse_animation(pline: 'Pipeline', tscop: Tuple[str, str], freq: float,
 if __name__ == '__main__':
     from RaJePy import cfg, JetModel, Pipeline
 
-    pline = Pipeline.load_pipeline('/Users/simon.purser/Desktop/test_output_dcy2/pipeline.save')
+    pline = Pipeline.load_pipeline(
+        '/Users/simon.purser/Desktop/test_output_dcy2/pipeline.save')
 
     timelapse_animation(pline, ('EMERLIN', '0'), 6e9, 'test.mp4')

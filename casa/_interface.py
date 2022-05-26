@@ -66,7 +66,7 @@ class Script(object):
             for task in self.tasklist:
                 lf.write(str(task) + '\n')
 
-        cmd = "casa --nogui --nologger --agg --logfile {} -c {}"
+        cmd = "casa --nogui --nologger --agg --logfile '{}' -c '{}'"
 
         if dryrun:
             print(cmd.format(dcy + os.sep + self.logfile,

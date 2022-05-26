@@ -14,8 +14,10 @@ import sys
 import os
 import time
 import pickle
+import multiprocessing as mp
 from typing import Union, Callable, List, Tuple, Dict
 
+from tqdm.dask import TqdmCallback
 import numpy.typing as npt
 import numpy as np
 import dask.array as da
@@ -248,8 +250,8 @@ class JetModel:
         self.params["properties"]["n_0"] = n_0
 
         # For asymmetry
-        self._jml_t_bj = lambda t: self._ss_jml_bj
-        self._jml_t_rj = lambda t: self._ss_jml_rj
+        self._jml_t_bj = lambda t: t * 0 + self._ss_jml_bj
+        self._jml_t_rj = lambda t: t * 0 + self._ss_jml_rj
 
         self._ejections = {}  # Record of any ejection events
         for idx, ejn_t0 in enumerate(self.params['ejection']['t_0']):
@@ -471,9 +473,9 @@ class JetModel:
     def indices(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if self._idxs:
             return self._idxs
-        self._idxs = tuple(np.meshgrid(np.arange(self.nx, dtype=np.uint16),
-                                       np.arange(self.ny, dtype=np.uint16),
-                                       np.arange(self.nz, dtype=np.uint16),
+        self._idxs = tuple(np.meshgrid(np.arange(self.nx),# dtype=np.uint16),
+                                       np.arange(self.ny),# dtype=np.uint16),
+                                       np.arange(self.nz),# dtype=np.uint16),
                                        indexing=self._arr_indexing))
 
         return self._idxs
@@ -574,7 +576,7 @@ class JetModel:
         return self.grid[2][0][0]
 
     @property
-    def fill_factor(self) -> np.ndarray:
+    def fill_factor_numpy(self) -> np.ndarray:
         """
         Calculate the fraction of each of the grid's cells falling within the
         jet's hard boundary define by w(r) (see RaJePy.maths.geometry.w_r
@@ -607,7 +609,7 @@ class JetModel:
 
         then = time.time()
 
-        n_verts_inside = np.zeros(np.shape(self.xx), dtype=int)
+        n_verts_inside = np.zeros(np.shape(self.xx), dtype=np.uint8)
         verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
                  (0., 0., cs), (cs, 0., cs), (0., cs, cs), (cs, cs, cs))
 
@@ -620,7 +622,6 @@ class JetModel:
         ffs = np.where(n_verts_inside == 8, 1.0, ffs)
         ffs = np.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
         areas = np.where(0 < n_verts_inside, 1.0, areas)
-
 
         now = time.time()
         if self.log:
@@ -642,7 +643,7 @@ class JetModel:
         return self._ff
 
     @property
-    def filsdl_factor(self) -> np.ndarray:
+    def fill_factor(self) -> np.ndarray:
         """
         Calculate the fraction of each of the grid's cells falling within the
         jet's hard boundary define by w(r) (see RaJePy.maths.geometry.w_r
@@ -650,56 +651,6 @@ class JetModel:
         """
         if self._ff is not None:
             return self._ff
-
-        # TODO: Have disabled grid reflection due to correction of
-        #  mgeom.xyz_to_rwp method to handle inclinations and position angles in
-        #  the astronomically correct sense. Therefore, need to propagate these
-        #  changes into the reflection logic at some point, for efficiency
-        # # Establish reflective symmetries present, if any, to reduce
-        # # computation time by reflection of coordinates/ffs/areas about
-        # # relevant axes
-        # refl_sym_x = False  # Reflective symmetry about x-axis?
-        # refl_sym_y = False  # Reflective symmetry about y-axis?
-        # refl_sym_z = False  # Reflective symmetry about z-axis?
-        # refl_axes = []  # List holding reflected axes for use with np arrays
-        #
-        # if self.params["geometry"]["inc"] == 90.:
-        #     if self.params["geometry"]["pa"] == 0.:
-        #         refl_sym_x = refl_sym_y = refl_sym_z = True
-        #         refl_axes = [0, 1, 2]
-        #     else:
-        #         refl_sym_y = True
-        #         refl_axes = [1]
-        # else:
-        #     if self.params["geometry"]["pa"] == 0.:
-        #         refl_sym_x = True
-        #         refl_axes = [0]
-        #
-        # # Set up coordinate grids in x, y, z based upon axial reflective
-        # # symmetries present given the provided inclination and position angle
-        # if any((refl_sym_x, refl_sym_y, refl_sym_z)):
-        #     if all((refl_sym_x, refl_sym_y, refl_sym_z)):
-        #         xx, yy, zz = [_[int(self.nx / 2):,
-        #                         int(self.ny / 2):,
-        #                         int(self.nz / 2):] for _ in self.grid]
-        #     else:
-        #         if refl_sym_x:
-        #             xx, yy, zz = [_[int(self.nx / 2):, :, :]
-        #                           for _ in self.grid]
-        #         elif refl_sym_y:
-        #             xx, yy, zz = [_[:, int(self.ny / 2):, :]
-        #                           for _ in self.grid]
-        #         else:
-        #             err_msg = u"Grid symmetry not understood for i = {:.0f}" \
-        #                       u"\u00B0 and \u03B8={:.0f}\u00B0"
-        #             err_msg = err_msg.format(self.params["geometry"]["inc"],
-        #                                      self.params["geometry"]["pa"])
-        #             raise ValueError(err_msg)
-        #
-        # else:
-        #     xx, yy, zz = self.grid
-
-        # xx, yy, zz = self.grid
 
         if self.log:
             self._log.add_entry(mtype="INFO",
@@ -726,10 +677,13 @@ class JetModel:
         # count = 0
         # progress = -1
         then = time.time()
-
-        import multiprocessing as mp
         ncpu = mp.cpu_count()
-        chunk_size = tuple([_ // (ncpu * 2) for _ in self.xx.shape])
+
+        chunk_size = list(self.xx.shape)
+        chunk_size[np.argmax(chunk_size)] = int(
+            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
+        )
+
         n_verts_inside = da.zeros(np.shape(self.xx), chunks=chunk_size,
                                   dtype=np.uint8)
         verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
@@ -745,103 +699,26 @@ class JetModel:
                                       n_verts_inside + 1, n_verts_inside)
 
         ffs = da.where(n_verts_inside == 8, 1.0, ffs)
-        ffs = da.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
-        areas = da.where(0 < n_verts_inside, 1.0, areas)
+        ffs = da.where((n_verts_inside > 0) & (n_verts_inside < 8), 1.0, ffs)
+        # for n_verts in range(1, 8):
+        #     ffs = da.where(n_verts_inside == n_verts,
+        #                    (n_verts * 2 + 1) / 16., ffs)
 
+        areas = da.where(n_verts_inside > 0, 1.0, 0.0)
 
-
-        # for idxy, yplane in enumerate(self.zz):
-        #     for idxx, xrow in enumerate(yplane):
-        #         for idxz, z in enumerate(xrow):
-        #             count += 1
-        #             # Does the cell definitely lie outside of the jet
-        #             # boundary? Yes if w-coordinate is more than the cells'
-        #             # full diagonal dimension away from the jet's width at
-        #             # the cells' r-coordinate
-        #             wr = mgeom.w_r(self.rr[idxy][idxx][idxz],
-        #                            w_0, mod_r_0, r_0, eps)  # Removed
-        #                                                     # np.abs(r) here
-        #             if (self.ww[idxy][idxx][idxz] - 0.5 * diag) > wr:
-        #                 continue
-        #
-        #             # Voxel blfc coordinate
-        #             x, y = (self.xx[idxy][idxx][idxz],
-        #                     self.yy[idxy][idxx][idxz])
-        #
-        #             # Voxel's vertices' coordinates
-        #             verts = np.array([(x, y, z), (x + cs, y, z),
-        #                               (x, y + cs, z), (x + cs, y + cs, z),
-        #                               (x, y, z + cs), (x + cs, y, z + cs),
-        #                               (x, y + cs, z + cs),
-        #                               (x + cs, y + cs, z + cs)])
-        #
-        #             # Cell-vertices' r, w and phi coordinates
-        #             rv, wv, pv = mgeom.xyz_to_rwp(verts[::, 0], verts[::, 1],
-        #                                           verts[::, 2], inc, pa)
-        #             wr = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)  # Removed
-        #                                                         # np.abs(r)
-        #                                                         # here
-        #             verts_inside = (wv <= wr) & (np.abs(rv) >= r_0)
-        #
-        #             if np.sum(verts_inside) == 8:
-        #                 ff = 1.
-        #                 area = 1.
-        #             elif np.sum(verts_inside) == 0:
-        #                 continue
-        #             else:
-        #                 # TODO: Cells at base of jet need to accommodate for
-        #                 #  r_0 properly. Value of 0.5 for ff and area will
-        #                 #  not do
-        #                 # Take average values for fill factor/projected areas
-        #                 ff = .5
-        #                 area = 1.0
-        #
-        #             ffs[idxy][idxx][idxz] = ff
-        #             areas[idxy][idxx][idxz] = area
-        #
-        #         # Progress bar
-        #         new_progress = int(count / nvoxels * 100)  #
-        #         if new_progress > progress:
-        #             progress = new_progress
-        #             pblen = get_terminal_size().columns - 1
-        #             pblen -= 16  # 16 non-varying characters
-        #             s = '[' + ('=' * (int(progress / 100 * pblen) - 1)) + \
-        #                 ('>' if int(progress / 100 * pblen) > 0 else '') + \
-        #                 (' ' * int(pblen - int(progress / 100 * pblen))) + ']'
-        #             # s += format(int(progress), '3') + '% complete'
-        #             if progress != 0.:
-        #                 t_sofar = (time.time() - then)
-        #                 try:
-        #                     rate = progress / t_sofar
-        #                     secs_left = (100. - progress) / rate
-        #                     s += time.strftime('%Hh%Mm%Ss left',
-        #                                        time.gmtime(secs_left))
-        #                 except ZeroDivisionError:
-        #                     s += '  h  m  s left'
-        #             else:
-        #                 s += '  h  m  s left'
-        #             print('\r' + s, end='' if progress < 100 else '\n')
-
-
-
-        # TODO: Have disabled grid reflection due to correction of
-        #  mgeom.xyz_to_rwp method to handle inclinations and position angles in
-        #  the astronomically correct sense. Therefore, need to propagate these
-        #  changes into the reflection logic at some point, for efficiency
-        # # Reflect in x, y and z axes
-        # for axis in refl_axes:
-        #     ffs = np.append(np.flip(ffs, axis=axis), ffs, axis=axis)
-        #     areas = np.append(np.flip(areas, axis=axis), areas, axis=axis)
-
-        # Included as there are some, presumed floating point errors giving
-        # fill factors of ~1e-15 on occasion
+        # Mask empty cells with NaNs
         ffs = da.where(ffs > 1e-6, ffs, np.NaN)
         areas = da.where(areas > 1e-6, areas, np.NaN)
 
-        self._ff = ffs.compute()
-        self._areas = areas.compute()
-
+        # Run cell fill-factor and area dask-computations and wrap in TQDM
+        # progress bars
         now = time.time()
+        with TqdmCallback(desc="Computing fill factors:", unit='%', total=100.):
+            self._ff = ffs.compute()
+
+        with TqdmCallback(desc="       Computing areas:", unit='%', total=100.):
+            self._areas = areas.compute()
+
         if self.log:
             self.log.add_entry(mtype="INFO",
                                entry=time.strftime('Finished in %Hh%Mm%Ss',
@@ -866,58 +743,6 @@ class JetModel:
         _ = self.fill_factor  # Areas calculated as part of fill factors
 
         return self._areas
-
-    # @property
-    # def mass(self) -> np.ndarray:
-    #     if self._m is not None:
-    #         return self._m
-    #
-    #     w_0 = self.params['geometry']['w_0'] / self.params['grid']['c_size']
-    #     r_0 = self.params['geometry']['r_0'] / self.params['grid']['c_size']
-    #     eps = self.params['geometry']['epsilon']
-    #
-    #     # Mass of slice with z-width == 1 full cell
-    #     mass_full_slice = (self._ss_jml_bj *
-    #                        (self.csize * con.au /
-    #                         (self.params['properties']['v_0'] * 1e3)))
-    #
-    #     ms = np.zeros(np.shape(self.fill_factor))
-    #     constant = np.pi * w_0 ** 2. / ((2. * eps + 1.) * r_0 ** (2. * eps))
-    #
-    #     for idz, z in enumerate(self.grid[2][0][0] / self.csize):
-    #         z = np.round(z)
-    #         n_z = int(np.min(np.abs([z, z + 1])))
-    #         if n_z > r_0:
-    #             vol_zlayer = constant * ((n_z + 1.) ** (2. * eps + 1) -
-    #                                      (n_z + 0.) ** (2. * eps + 1))
-    #             mass_slice = mass_full_slice
-    #         elif (n_z + 1) >= r_0:
-    #             vol_zlayer = constant * ((n_z + 1.) ** (2. * eps + 1) -
-    #                                      r_0 ** (2. * eps + 1))
-    #             mass_slice = mass_full_slice * (n_z + 1. - r_0)
-    #         else:
-    #             # vol_zlayer = 0.
-    #             # mass_slice = 0.
-    #             continue
-    #
-    #         ffs_zlayer = self.fill_factor[:, :, idz]
-    #         m_cell = mass_slice / vol_zlayer  # kg / cell
-    #         ms_zlayer = ffs_zlayer * m_cell
-    #
-    #         ms[:, :, idz] = ms_zlayer
-    #
-    #     ms = (self.number_density * (self.csize * con.au * 1e2) ** 3. *
-    #           self.params['properties']['mu'] * mphys.atomic_mass('H') *
-    #           self.fill_factor)
-    #
-    #     ms = np.where(self.fill_factor > 0, ms, np.NaN)
-    #     self._m = ms
-    #
-    #     return self._m
-    #
-    # @mass.setter
-    # def mass(self, new_ms: np.ndarray):
-    #     self._m = new_ms
 
     @property
     def ts(self) -> np.ndarray:
@@ -958,6 +783,8 @@ class JetModel:
         if self._nd is not None:
             return self._nd * self.chi_xyz
 
+        self.log.add_entry('INFO', "Computing number densities")
+
         r1 = self.params["target"]["R_1"]
         mr0 = self.params['geometry']['mod_r_0']
         r0 = self.params['geometry']['r_0']
@@ -970,15 +797,44 @@ class JetModel:
                      (r0 + r + self.csize / 2.) / 2., r)
         # nd = n_0 * mgeom.rho(self.rr, r0, mr0) ** q_n * \
         #      (self.rreff / r1) ** q_nd
-        nd = mgeom.cell_value(n_0, mgeom.rho(r, r0, mr0), self.rreff,
+
+        # nd = miscf.provide_progress_bar(mgeom.cell_value, estimated_time=60,
+        #                                 args=(n_0, mgeom.rho(r, r0, mr0),
+        #                                       self.rreff, r1, q_n, q_nd))
+        # TODO: Convert to Dask array operations
+
+
+        # nd = mgeom.cell_value(n_0, mgeom.rho(r, r0, mr0), self.rreff,
+        #                       r1, q_n, q_nd)
+        # nd = np.where(self.fill_factor > 0, nd, np.NaN)
+        # nd = np.where(nd == 0, np.NaN, nd)
+        #
+        # # For asymmetric mass loss
+        # nd = np.where(self.rr < 0, nd * self._ss_jml_rb_frac, nd)
+        #
+        # self._nd = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN, neginf=np.NaN)
+
+        ncpu = mp.cpu_count()
+        chunk_size = list(self.xx.shape)
+        chunk_size[np.argmax(chunk_size)] = int(
+            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
+        )
+
+        rreff = da.from_array(self.rreff, chunks=chunk_size)
+
+        nd = mgeom.cell_value(n_0, mgeom.rho(r, r0, mr0), rreff,
                               r1, q_n, q_nd)
-        nd = np.where(self.fill_factor > 0, nd, np.NaN)
-        nd = np.where(nd == 0, np.NaN, nd)
+        nd = da.where(self.fill_factor > 0, nd, np.NaN)
+        nd = da.where(nd == 0, np.NaN, nd)
 
         # For asymmetric mass loss
-        nd = np.where(self.rr < 0, nd * self._ss_jml_rb_frac, nd)
+        nd = da.where(self.rr < 0, nd * self._ss_jml_rb_frac, nd)
 
-        self._nd = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN, neginf=np.NaN)
+        # self._nd = da.nan_to_num(nd, nan=np.NaN, posinf=np.NaN, neginf=np.NaN)
+        nd = da.where(da.isinf(nd), np.NaN, nd)
+
+        with TqdmCallback(desc="      Computing n(r,w):", unit='%', total=100.):
+            self._nd = nd.compute()
 
         return self.number_density
 
@@ -995,6 +851,8 @@ class JetModel:
     def ion_fraction(self) -> np.ndarray:
         if self._xi is not None:
             return self._xi
+
+        self.log.add_entry('INFO', "Computing ionisation fractions")
 
         r_1 = self.params["target"]["R_1"]
         mod_r_0 = self.params['geometry']['mod_r_0']
@@ -1031,6 +889,7 @@ class JetModel:
         if self._temp is not None:
             return self._temp
 
+        self.log.add_entry('INFO', "Computing temperatures")
         r_1 = self.params["target"]["R_1"]
         mod_r_0 = self.params['geometry']['mod_r_0']
         r_0 = self.params['geometry']['r_0']
@@ -1122,7 +981,7 @@ class JetModel:
         # vz /= b - a
         #
         # vz = np.where(self.fill_factor > 0., vz, np.NaN) * np.sign(self.rr)
-
+        self.log.add_entry('INFO', "Computing 3D-velocities")
         r_1 = self.params["target"]["R_1"]
         mod_r_0 = self.params['geometry']['mod_r_0']
         r_0 = self.params['geometry']['r_0']
@@ -2260,8 +2119,6 @@ class Pipeline:
                                timestamp=True)
 
         self._runs = runs
-        self.log.add_entry(mtype="INFO",
-                           entry=self.__str__(), timestamp=True)
 
     def __str__(self):
         hdr = ['Year', 'Type', 'Telescope', 't_obs', 't_int', 'Line',
@@ -2408,6 +2265,14 @@ class Pipeline:
         import RaJePy.casa.tasks as tasks
         import RaJePy.maths as maths
 
+        for i in range(len(self.runs)):
+            if dryrun:
+                self.runs[i].radiative_transfer = False
+            if not simobserve:
+                self.runs[i].simobserve = False
+
+        self.log.add_entry(mtype="INFO",
+                           entry=self.__str__(), timestamp=True)
         self.log.add_entry("INFO", "Beginning pipeline execution")
         if verbose != self.log.verbose:
             self.log.verbose = verbose
@@ -2448,7 +2313,7 @@ class Pipeline:
                 self.log.add_entry(mtype="INFO",
                                    entry="Run #{} previously completed, "
                                          "skipping".format(idx + 1, ),
-                                   timestamp=False)
+                                   timestamp=True)
                 continue
             try:
                 # Create relevant directories
@@ -2456,9 +2321,12 @@ class Pipeline:
                     self.log.add_entry(mtype="INFO",
                                        entry="{} doesn't exist, "
                                              "creating".format(run.rt_dcy),
-                                       timestamp=False)
+                                       timestamp=True)
                     # if not dryrun:
                     os.makedirs(run.rt_dcy)
+
+                # Compute densities
+                _ = self.model.number_density
 
                 # Plot physical jet model, if required
                 model_plotfile = os.sep.join([os.path.dirname(run.rt_dcy),
@@ -2467,7 +2335,7 @@ class Pipeline:
                     pfunc.model_plot(self.model, savefig=model_plotfile,
                                      show_plot=False)
 
-                if not dryrun and run.radiative_transfer:
+                if run.radiative_transfer:
                     self.log.add_entry(mtype="INFO",
                                        entry="Conducting radiative transfer at "
                                              f"{run.freq / 1e9:.1f}GHz for a "
@@ -2483,7 +2351,7 @@ class Pipeline:
                         self.log.add_entry(mtype="INFO",
                                            entry="Emission measures already "
                                                  f"exist -> {run.fits_em}",
-                                           timestamp=False)
+                                           timestamp=True)
 
                     # Radiative transfer
                     if run.obs_type == 'continuum':
@@ -2498,7 +2366,7 @@ class Pipeline:
                             self.log.add_entry(mtype="INFO",
                                                entry="Optical depths already "
                                                      f"exist -> {run.fits_tau}",
-                                               timestamp=False)
+                                               timestamp=True)
                         if not os.path.exists(run.fits_flux) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Calculating fluxes and "
@@ -2510,7 +2378,7 @@ class Pipeline:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already exist -> "
                                                      f"{run.fits_flux}",
-                                               timestamp=False)
+                                               timestamp=True)
                             fluxes = fits.open(run.fits_flux)[0].data
                     else:
                         if not os.path.exists(run.fits_tau) or clobber:
@@ -2525,7 +2393,7 @@ class Pipeline:
                             self.log.add_entry(mtype="INFO",
                                                entry="Optical depths already "
                                                      f"exist -> {run.fits_tau}",
-                                               timestamp=False)
+                                               timestamp=True)
                         if not os.path.exists(run.fits_flux) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Calculating fluxes and "
@@ -2539,7 +2407,7 @@ class Pipeline:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already exist -> "
                                                      f"{run.fits_flux}",
-                                               timestamp=False)
+                                               timestamp=True)
                             fluxes = fits.open(run.fits_flux)[0].data
 
                     if run.obs_type == 'continuum':
@@ -2559,6 +2427,8 @@ class Pipeline:
                     if not os.path.exists(self.model_file):
                         self.model.save(self.model_file)
 
+                    if not run.simobserve:
+                        self.runs[idx].completed = True
                     # Save pipeline state after successful run
                     self.save(self.save_file, absolute_directories=True)
 
@@ -2571,7 +2441,7 @@ class Pipeline:
 
             # Run casa's simobserve and produce visibilities, followed by tclean
             # and then export the images in .fits format
-            if simobserve and run.simobserve and not dryrun:
+            if run.simobserve:
                 self.log.add_entry("INFO",
                                    "Setting up synthetic observation CASA "
                                    "script")
@@ -2640,7 +2510,7 @@ class Pipeline:
                                    " splitting observations over {} run(s)"
                                    "".format(el_range[0], el_range[1], min_el,
                                              run.t_obs / 3600, len(totaltimes)),
-                                   timestamp=False)
+                                   timestamp=True)
 
                 # Decide 'dates of observation'
                 refdates = []
@@ -2767,7 +2637,7 @@ class Pipeline:
                                    "is calculated and therefore using a cell "
                                    "size of {:.2e}arcsec"
                                    "".format(max_bl_uvwave, beam_min,
-                                             cell_size), timestamp=False)
+                                             cell_size), timestamp=True)
 
                 # Define cleaning region as the box encapsulating the flux-model
                 # and determine minimum clean image size as twice that of the
@@ -2829,10 +2699,9 @@ class Pipeline:
                 if jet_conv_min > jet_conv_maj:
                     jet_conv_maj, jet_conv_min = jet_conv_min, jet_conv_maj
 
-                mask_str = 'box[[{}deg, {}deg], [{}deg, {}deg]]'.format(blc[0],
-                                                                        blc[1],
-                                                                        trc[0],
-                                                                        trc[1])
+                mask_str = 'box[[{}deg, {}deg], [{}deg, {}deg]]'.format(
+                    blc[0], blc[1], trc[0], trc[1]
+                )
 
                 min_imsize_as = max(np.abs([nx * cellx, ny * celly])) * 7200.
                 min_imsize_cells = int(np.ceil(min_imsize_as / cell_size))
@@ -2895,7 +2764,7 @@ class Pipeline:
                                            "CASA log file, {}"
                                            "".format(script.casafile,
                                                      script.logfile),
-                                   timestamp=False)
+                                   timestamp=True)
                 script.execute(dcy=run.rt_dcy, dryrun=dryrun)
 
                 if run.obs_type == 'continuum':
@@ -2936,15 +2805,15 @@ class Pipeline:
 
             self.runs[idx].completed = True
 
-        if not dryrun and simobserve:
-            for year in self.params["continuum"]['times']:
-                save_file = os.sep.join([self.dcy,
-                                         f'RadioSED{year:.1f}yrPlot.png'])
-                self.log.add_entry("INFO",
-                                   "Saving radio SED figure to "
-                                   f"{save_file.replace('png', '(png,pdf)')} "
-                                   f"for time {year}yr")
-                pfunc.sed_plot(self, year, savefig=save_file)
+        # if simobserve:
+        for year in self.params["continuum"]['times']:
+            save_file = os.sep.join([self.dcy,
+                                     f'RadioSED{year:.1f}yrPlot.png'])
+            self.log.add_entry("INFO",
+                               "Saving radio SED figure to "
+                               f"{save_file.replace('png', '(png,pdf)')} "
+                               f"for time {year}yr")
+            pfunc.sed_plot(self, year, savefig=save_file)
 
         self.save(self.save_file)
         self.model.save(self.model_file)

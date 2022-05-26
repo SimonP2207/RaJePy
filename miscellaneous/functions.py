@@ -3,6 +3,51 @@ from typing import Union
 import numpy as np
 import astropy.units as u
 from astropy.coordinates import SkyCoord
+import threading
+import tqdm
+
+
+def provide_progress_bar(function, estimated_time, tstep=0.2, tqdm_kwargs=None,
+                         args=None, kwargs=None):
+    """Tqdm wrapper for a long-running function
+
+    args:
+        function - function to run
+        estimated_time - how long you expect the function to take
+        tstep - time delta (seconds) for progress bar updates
+        tqdm_kwargs - kwargs to construct the progress bar
+        args - args to pass to the function
+        kwargs - keyword args to pass to the function
+    ret:
+        function(*args, **kwargs)
+    """
+    if tqdm_kwargs is None:
+        tqdm_kwargs = {}
+
+    if args is None:
+        args = []
+
+    if kwargs is None:
+        kwargs = {}
+
+    ret = [None]  # Mutable var so the function can store its return value
+
+    def myrunner(func, ret_, *args_, **kwargs_):
+        """-"""
+        ret_[0] = func(*args_, **kwargs_)
+
+    thread = threading.Thread(target=myrunner,
+                              args=(function, ret) + tuple(args),
+                              kwargs=kwargs)
+    pbar = tqdm.tqdm(total=estimated_time, **tqdm_kwargs)
+
+    thread.start()
+    while thread.is_alive():
+        thread.join(timeout=tstep)
+        pbar.update(tstep)
+    pbar.close()
+    return ret[0]
+
 
 def is_float(x):
     try:
