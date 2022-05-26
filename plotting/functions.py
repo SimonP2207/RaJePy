@@ -1026,9 +1026,10 @@ def geometry_plot(jm: 'JetModel', show_plot: bool = False,
     data = jm.fill_factor
 
     sum_data_x = np.nansum(data,
-                           axis=[_ for _ in (0, 1) if _ != jm.los_axis][0])
-    sum_data_y = np.nansum(data, axis=jm.los_axis)
-    sum_data_z = np.nansum(data, axis=2)
+                           axis=[_ for _ in (0, 1) if _ != jm.los_axis][0],
+                           dtype=float)
+    sum_data_y = np.nansum(data, axis=jm.los_axis, dtype=float)
+    sum_data_z = np.nansum(data, axis=2, dtype=float)
 
     plt.close('all')
 

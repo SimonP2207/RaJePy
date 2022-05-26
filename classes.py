@@ -171,7 +171,7 @@ class JetModel:
                             "str)")
 
         self._name = self.params['target']['name']
-        self._csize = self.params['grid']['c_size']
+        self._csize = np.float32(self.params['grid']['c_size'])
 
         # Automatically calculated parameters
         mr0 = mgeom.mod_r_0(self._params['geometry']['opang'],
@@ -216,9 +216,9 @@ class JetModel:
         self.params['grid']['n_y'] = ny
         self.params['grid']['n_z'] = nz
 
-        self._nx = nx  # number of cells in x
-        self._ny = ny  # number of cells in y
-        self._nz = nz  # number of cells in z
+        self._nx = np.uint16(nx)  # number of cells in x
+        self._ny = np.uint16(ny)  # number of cells in y
+        self._nz = np.uint16(nz)  # number of cells in z
 
         # Create necessary class-instance attributes for all necessary grids
         self._ff = None  # cell fill factors
@@ -473,9 +473,9 @@ class JetModel:
     def indices(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if self._idxs:
             return self._idxs
-        self._idxs = tuple(np.meshgrid(np.arange(self.nx),# dtype=np.uint16),
-                                       np.arange(self.ny),# dtype=np.uint16),
-                                       np.arange(self.nz),# dtype=np.uint16),
+        self._idxs = tuple(np.meshgrid(np.arange(self.nx, dtype=np.int16),
+                                       np.arange(self.ny, dtype=np.int16),
+                                       np.arange(self.nz, dtype=np.int16),
                                        indexing=self._arr_indexing))
 
         return self._idxs
@@ -669,7 +669,8 @@ class JetModel:
         pa = self.params['geometry']['pa']
         cs = self.csize
 
-        ffs = np.zeros(np.shape(self.xx))
+        # ffs = np.zeros(np.shape(self.xx))
+        ffs = da.zeros(np.shape(self.xx), dtype=np.half)
         areas = np.zeros(
             np.shape(self.xx))  # Areas as projected on to the y-axis
         # diag = np.sqrt(cs ** 2. * 3.)  # Diagonal dimensions of cells (au)
@@ -698,13 +699,15 @@ class JetModel:
             n_verts_inside = da.where((wrv >= wv) & (np.abs(rv) >= r_0),
                                       n_verts_inside + 1, n_verts_inside)
 
-        ffs = da.where(n_verts_inside == 8, 1.0, ffs)
-        ffs = da.where((n_verts_inside > 0) & (n_verts_inside < 8), 1.0, ffs)
+        ffs = da.where(n_verts_inside == 8,
+                       np.float16(1.0), ffs)
+        ffs = da.where((n_verts_inside > 0) & (n_verts_inside < 8),
+                       np.float16(1.0), ffs)
         # for n_verts in range(1, 8):
         #     ffs = da.where(n_verts_inside == n_verts,
         #                    (n_verts * 2 + 1) / 16., ffs)
 
-        areas = da.where(n_verts_inside > 0, 1.0, 0.0)
+        areas = da.where(n_verts_inside > 0, np.float16(1.0), np.float16(0.0))
 
         # Mask empty cells with NaNs
         ffs = da.where(ffs > 1e-6, ffs, np.NaN)
@@ -753,13 +756,15 @@ class JetModel:
         if self._ts is not None:
             return self.time - self._ts
 
+        self.log.add_entry('INFO', "Computing t(r,w)")
+
         r_0 = self.params['geometry']['r_0']
         r = np.abs(self.rr)
         r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
                      (r_0 + r + self.csize / 2.) / 2., r)
 
         ts = mgeom.t_rw(r, self.ww, self.params) * con.year
-        self.ts = ts
+        self.ts = ts.astype(np.float32)
 
         return self.ts
 
@@ -776,7 +781,7 @@ class JetModel:
                            self._jml_t_rj(self.ts) / self._ss_jml_rj,
                            self._jml_t_bj(self.ts) / self._ss_jml_bj)
 
-        return chi_xyz
+        return chi_xyz.astype(np.float16)
 
     @property
     def number_density(self) -> np.ndarray:
