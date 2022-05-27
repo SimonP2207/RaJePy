@@ -6,3 +6,4 @@
 /test_output_dcy
 /test_output_dcy/*
 venv
+*.pyc

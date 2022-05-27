@@ -108,11 +108,11 @@ tscop_info['cfg_files']['SMA']['VEXTENDED'] = 'sma.vextended.cfg'
 # VLA
 tscop_info['cfg_files']['VLA']['A'] = 'vla.a.cfg'
 tscop_info['cfg_files']['VLA']['BnA'] = 'vla.bna.cfg'
-tscop_info['cfg_files']['VLA']['B'] = 'vla.a.cfg'
+tscop_info['cfg_files']['VLA']['B'] = 'vla.b.cfg'
 tscop_info['cfg_files']['VLA']['CnB'] = 'vla.cnb.cfg'
-tscop_info['cfg_files']['VLA']['C'] = 'vla.a.cfg'
+tscop_info['cfg_files']['VLA']['C'] = 'vla.c.cfg'
 tscop_info['cfg_files']['VLA']['DnC'] = 'vla.dnc.cfg'
-tscop_info['cfg_files']['VLA']['D'] = 'vla.a.cfg'
+tscop_info['cfg_files']['VLA']['D'] = 'vla.d.cfg'
 
 # VLBA
 tscop_info['cfg_files']['VLBA']['0'] = 'vlba.cfg'
