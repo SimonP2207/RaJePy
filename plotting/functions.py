@@ -1199,7 +1199,7 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
              mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
 
     if len(alphas_imfit) > 0:
-        ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
+        ax2.errorbar(freqs_a_imfit, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
                      ls='None', capsize=2)
 
     freqs_r86 = np.logspace(np.log10(np.min(xlims)),
