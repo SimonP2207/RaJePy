@@ -140,7 +140,7 @@ class JetModel:
         if os.path.dirname(py_file) not in sys.path:
             sys.path.append(os.path.dirname(py_file))
 
-        jp = __import__(os.path.basename(py_file).rstrip('.py'))
+        jp = __import__(os.path.basename(py_file).replace('.py', ''))
         err = miscf.check_model_params(jp.params)
         if err is not None:
             raise err
@@ -2030,7 +2030,11 @@ class Pipeline:
             raise TypeError("Supplied arg params must be dict or full path ("
                             "str)")
 
-        self.dcy = self.params['dcys']['model_dcy'].rstrip(os.sep)
+        self.dcy = self.params['dcys']['model_dcy']
+
+        if self.dcy[-1] == os.sep:
+            self.dcy = self.dcy[:-1]
+
         self.model_file = self.dcy + os.sep + "jetmodel.save"
         self.save_file = self.dcy + os.sep + "pipeline.save"
         self.ptgfile = self.dcy + os.sep + 'pointings.ptg'
@@ -2568,16 +2572,15 @@ class Pipeline:
 
                 # Final measurement set paths
                 fnl_clean_ms = run.rt_dcy + os.sep + 'SynObs' + os.sep
-                fnl_clean_ms += '.'.join(['SynObs',
-                                          os.path.basename(ant_list).rstrip(
-                                              '.cfg'),
-                                          'ms'])
+                fnl_clean_ms += '.'.join([
+                    'SynObs', os.path.basename(ant_list).replace('.cfg', ''),
+                    'ms'])
 
                 fnl_noisy_ms = run.rt_dcy + os.sep + 'SynObs' + os.sep
-                fnl_noisy_ms += '.'.join(['SynObs',
-                                          os.path.basename(ant_list).rstrip(
-                                              '.cfg'),
-                                          'noisy', 'ms'])
+                fnl_noisy_ms += '.'.join([
+                    'SynObs', os.path.basename(ant_list).replace('.cfg', ''),
+                    'noisy', 'ms']
+                )
 
                 if multiple_ms:
                     if os.path.exists(run.rt_dcy + os.sep + 'SynObs'):
@@ -2589,14 +2592,16 @@ class Pipeline:
 
                     for project in projects:
                         pdcy = run.rt_dcy + os.sep + project
-                        clean_ms = '.'.join([project,
-                                             os.path.basename(
-                                                 ant_list).rstrip('.cfg'),
-                                             'ms'])
-                        noisy_ms = '.'.join([project,
-                                             os.path.basename(
-                                                 ant_list).rstrip('.cfg'),
-                                             'noisy', 'ms'])
+                        clean_ms = '.'.join([
+                            project,
+                            os.path.basename(ant_list).replace('.cfg', ''),
+                            'ms'
+                        ])
+                        noisy_ms = '.'.join([
+                            project,
+                            os.path.basename(ant_list).replace('.cfg', ''),
+                            'noisy', 'ms'
+                        ])
                         clean_mss.append(pdcy + os.sep + clean_ms)
                         noisy_mss.append(pdcy + os.sep + noisy_ms)
 
@@ -2716,7 +2721,7 @@ class Pipeline:
                 else:
                     imsize_cells = [min_imsize_cells] * 2
 
-                im_name = fnl_noisy_ms.rstrip('ms') + 'imaging'
+                im_name = fnl_noisy_ms.replace('ms', 'imaging')
 
                 if run.obs_type == 'continuum':
                     specmode = 'mfs'
