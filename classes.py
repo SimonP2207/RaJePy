@@ -2306,12 +2306,24 @@ class Pipeline:
             if os.path.exists(self.model_file):
                 self.model = JetModel.load_model(self.model_file)
 
-        pfunc.geometry_plot(self.model, show_plot=False,
-                            savefig=os.sep.join([self.dcy,
-                                                 'GridPlot.pdf']))
+        try:
+            pfunc.geometry_plot(self.model, show_plot=False,
+                                savefig=os.sep.join([self.dcy, 'GridPlot.pdf']))
+        except Exception as e:
+            err_type = str(type(e)).split("'")[1]
+            self.log.add_entry('ERROR', "Matplotlib threw the following error:"
+                                        f"\n{err_type}: {e}")
 
-        pfunc.jml_profile_plot(self, show_plot=False,
-                               savefig=os.sep.join([self.dcy, 'JMLPlot.pdf']))
+
+        try:
+            pfunc.jml_profile_plot(self, show_plot=False,
+                                   savefig=os.sep.join([self.dcy,
+                                                        'JMLPlot.pdf']))
+        except Exception as e:
+            err_type = str(type(e)).split("'")[1]
+            self.log.add_entry('ERROR', "Matplotlib threw the following error:"
+                                        f"\n{err_type}: {e}")
+
 
         for idx, run in enumerate(self.runs):
             self.model.time = run.year * con.year
@@ -2341,8 +2353,14 @@ class Pipeline:
                 model_plotfile = os.sep.join([os.path.dirname(run.rt_dcy),
                                               "ModelPlot.pdf"])
                 if not os.path.exists(model_plotfile) or clobber:
-                    pfunc.model_plot(self.model, savefig=model_plotfile,
-                                     show_plot=False)
+                    try:
+                        pfunc.model_plot(self.model, savefig=model_plotfile,
+                                         show_plot=False)
+                    except Exception as e:
+                        err_type = str(type(e)).split("'")[1]
+                        self.log.add_entry('ERROR',
+                                           "Matplotlib threw the following error:"
+                                           f"\n{err_type}: {e}")
 
                 if run.radiative_transfer:
                     self.log.add_entry(mtype="INFO",
@@ -2823,7 +2841,13 @@ class Pipeline:
                                "Saving radio SED figure to "
                                f"{save_file.replace('png', '(png,pdf)')} "
                                f"for time {year}yr")
-            pfunc.sed_plot(self, year, savefig=save_file)
+            try:
+                pfunc.sed_plot(self, year, savefig=save_file)
+            except Exception as e:
+                err_type = str(type(e)).split("'")[1]
+                self.log.add_entry('ERROR',
+                                   "Matplotlib threw the following error:"
+                                   f"\n{err_type}: {e}")
 
         self.save(self.save_file)
         self.model.save(self.model_file)
@@ -3200,7 +3224,6 @@ class Pointing(object):
 if __name__ == '__main__':
     # import matplotlib.cm
     import matplotlib.pylab as plt
-    import RaJePy.plotting.functions as pfunc
 
     param_dcy = os.sep.join([os.path.dirname(__file__), 'files'])
     jm = JetModel(os.sep.join([param_dcy, 'example-model-params.py']))
