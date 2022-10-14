@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-import os
-from pathlib import Path
 from typing import Union, Tuple
 import numpy as np
 import scipy.constants as con
@@ -11,12 +9,6 @@ from matplotlib.colors import LogNorm, SymLogNorm, Normalize
 from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 import astropy.units as u
-
-
-# from RaJePy import cnsts
-# from RaJePy import JetModel
-# from RaJePy import _config as cfg
-# from RaJePy.maths import physics as mphys
 
 
 def equalise_axes(ax, fix_x=False, fix_y=False, fix_z=False):
@@ -109,7 +101,8 @@ def make_colorbar(cax, cmax, cmin=0, position='right', orientation='vertical',
                   numlevels=50, colmap='viridis', norm=None,
                   maxticks=AutoLocator(), minticks=False, tickformat=None,
                   hidespines=False):
-    # Custom colorbar using axes so that can set colorbar properties straightforwardly
+    # Custom colorbar using axes so that can set colorbar properties
+    # straightforwardly
 
     if isinstance(norm, LogNorm):
         colbar = np.linspace(np.log10(cmin), np.log10(cmax), numlevels + 1)
@@ -156,7 +149,8 @@ def make_colorbar(cax, cmax, cmin=0, position='right', orientation='vertical',
     if isinstance(norm, LogNorm):
         if orientation == 'vertical':
             cax.set_yscale(
-                'log')  # , subsy=minticks if isinstance(minticks, list) else [1, 2, 3, 4, 5, 6, 7, 8, 9])
+                'log')  # , subsy=minticks if isinstance(minticks, list) else
+            # [1, 2, 3, 4, 5, 6, 7, 8, 9])
         elif orientation == 'horizontal':
             cax.set_xscale(
                 'log')  # , subsy=minticks if isinstance(minticks, list) else [1, 2, 3, 4, 5, 6, 7, 8, 9])
@@ -634,7 +628,7 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
     #
     #     br_ax.annotate(r'$' + format(v_scale, '.0f') + '$\n$' +
     #                    r'\rm{km/s}$', cs, xytext=(0., -5.),  # half fontsize
-    #                    xycoords='data', textcoords='offset points',
+    #                    xycoords=  'data', textcoords='offset points',
     #                    va='top',
     #                    ha='center', multialignment='center', fontsize=10)
     # except ValueError:
@@ -892,7 +886,6 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
     -------
     None
     """
-    from RaJePy.classes import Pipeline, JetModel
     from RaJePy import cnsts
     from RaJePy import _config as cfg
 
@@ -1268,6 +1261,209 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
         fig.savefig(savefig.replace('png', 'pdf'), bbox_inches='tight',
                     metadata=pdf_metadata, dpi=300)
     return None
+
+
+def add_beam(ax, bmaj, bmin, bpa, loc='bl'):
+    import matplotlib.patches as mpatches
+
+    pad = 0.05
+    rect_width = 0.2
+    blc = [pad, pad]
+    e_c = [pad + rect_width / 2, pad + rect_width / 2]
+
+    if 't' in loc.lower():
+        blc[1] = 1 - pad - rect_width
+        e_c[1] = 1 - pad - rect_width / 2
+    if 'r' in loc.lower():
+        blc[0] = 1 - pad - rect_width
+        e_c[0] = 1 - pad - rect_width / 2
+
+    rect = mpatches.Rectangle(blc, rect_width, rect_width,
+                              transform=ax.transAxes,
+                              fill=False, color="white", linewidth=2)
+    ellipse = mpatches.Ellipse(e_c, bmin / np.ptp(ax.get_ylim()),
+                               bmaj / np.ptp(ax.get_xlim()), -bpa,
+                               transform=ax.transAxes, fill=True, color='white')
+    ax.add_patch(rect)
+    ax.add_patch(ellipse)
+
+    return rect, ellipse
+
+
+def radio_plot(pline: 'Pipeline', years: Union[float, Tuple[float], None],
+               freqs: Union[float, None, Tuple[float]],
+               fov: float, cb_rot: str = 'vertical', ncol: int = 3,
+               cmap: str = 'gnuplot', savefig: Union[bool, str] = False):
+    from collections.abc import Iterable
+    from matplotlib.gridspec import GridSpec
+    from matplotlib.cm import ScalarMappable
+    from astropy.io import fits
+    from RaJePy import _config as cfg
+
+    ax2cb = 7  # subplot to colorbar width ratio
+    clevs = np.array([-3, 3, 6, 12, 24, 48, 96, 192, 384])
+
+    if not isinstance(years, Iterable) and years:
+        years = (years, )
+
+    if not isinstance(freqs, Iterable) and freqs:
+        freqs = (freqs, )
+
+    runs = []
+    for run in pline.runs:
+        matching_year = False if years else True
+        matching_freq = False if freqs else True
+
+        if any([np.isclose(run.year, y) for y in years]):
+            matching_year = True
+        if any([np.isclose(run.freq, f) for f in freqs]):
+            matching_freq = True
+
+        if matching_year and matching_freq:
+            runs.append(run)
+
+    runs = sorted(runs, key=lambda x: x.freq)
+    runs = sorted(runs, key=lambda x: x.year)
+
+    nplots = len(runs)
+    nrow = nplots // ncol
+    nrow += 1 if nplots % ncol != 0 else 0
+
+    plt.close('all')
+
+    figsize = (cfg.plots['dims']['text'] * (ax2cb * 3 + 1.) / (ax2cb * 3.),
+               cfg.plots['dims']['text'])
+
+    if cb_rot == 'horizontal':
+        figsize = figsize[::-1]
+
+    fig = plt.figure(figsize=figsize)
+    gs = GridSpec(*((ax2cb * 3, ax2cb * 3 + 1)
+                    if cb_rot == 'vertical'
+                    else
+                    (ax2cb * 3 + 1, ax2cb * 3)),
+                  figure=fig, hspace=0., wspace=0.)
+
+    cax = fig.add_subplot(gs[:, -1] if cb_rot == 'vertical' else gs[0, :])
+    axes = {}
+    for i in range(nplots):
+        ax_name = f"ax{i}"
+
+        col = i % ncol
+        row = i // nrow
+
+        if cb_rot == 'vertical':
+            axes[ax_name] = fig.add_subplot(gs[ax2cb * row: ax2cb * row + ax2cb,
+                                            ax2cb * col: ax2cb * col + ax2cb])
+        else:
+            axes[ax_name] = fig.add_subplot(
+                gs[ax2cb * row + 1: ax2cb * row + ax2cb + 1,
+                ax2cb * col: ax2cb * col + ax2cb]
+            )
+
+        # Ticks and tick-labels
+        axes[ax_name].tick_params(which='both', axis='both', direction='in',
+                                  color='white', top=True, bottom=True, right=True,
+                                  left=True)
+
+        if col != 0:
+            axes[ax_name].spines['left'].set_color('w')
+            axes[ax_name].axes.yaxis.set_ticklabels([])
+        if col != ncol - 1:
+            axes[ax_name].spines['right'].set_color('w')
+
+        if row != 0:
+            axes[ax_name].spines['top'].set_color('w')
+        if row != nrow - 1:
+            axes[ax_name].spines['bottom'].set_color('w')
+            axes[ax_name].axes.xaxis.set_ticklabels([])
+
+        if row == nrow - 1 and col == nplots % ncol - 1:
+            axes[ax_name].spines['right'].set_color('k')
+        if nplots % ncol != 0 and \
+           col > nplots % ncol - 1 and \
+           row == nplots // ncol - 1:
+            axes[ax_name].spines['bottom'].set_color('k')
+
+    # Colorbar ticks
+    cax.yaxis.tick_right()
+    cax.tick_params(which='both', axis='both', direction='in',
+                    color='w', top=False, bottom=False, right=True,
+                    left=False)
+    cax.text(0.5, 0.5, r'$\left[ \mu \mathrm{Jy\, beam^{-1}} \right]$',
+             color='w', transform=cax.transAxes, ha='center', va='center',
+             rotation=90.)
+
+    vmin, vmax = 1e30, -1e30
+
+    for i, run in enumerate(runs):
+        with fits.open(run.products['clean_image']) as hdul:
+            data_min = np.nanmin(hdul[0].data)
+            data_max = np.nanmax(hdul[0].data)
+
+        if data_min < vmin:
+            vmin = data_min
+
+        if data_max > vmax:
+            vmax = data_max
+
+    # Display images
+    for i, run in enumerate(runs):
+        ax_name = f"ax{i}"
+        freq = run.freq
+        fitsfile = run.products['clean_image']
+
+        with fits.open(fitsfile) as hdul:
+            hdr = hdul[0].header
+            data = np.squeeze(hdul[0].data)
+
+        extent = (-hdr['CDELT1'] * (hdr['NAXIS1'] // 2) - hdr['CDELT1'] / 2,
+                  +hdr['CDELT1'] * (hdr['NAXIS1'] // 2) - hdr['CDELT1'] / 2,
+                  -hdr['CDELT2'] * (hdr['NAXIS2'] // 2) - hdr['CDELT2'] / 2,
+                  +hdr['CDELT2'] * (hdr['NAXIS2'] // 2) - hdr['CDELT2'] / 2)
+        extent = [_ * 3600. for _ in extent]
+        sd = np.std(data)
+
+        axes[ax_name].imshow(data, extent=extent, origin='lower', cmap=cmap,
+                             vmin=vmin, vmax=vmax, aspect='equal')
+        axes[ax_name].set_ylim(-fov / 2. * 0.9995, fov / 2. * 0.9995)
+        axes[ax_name].set_xticks(axes[ax_name].get_yticks())
+        axes[ax_name].set_xlim(axes[ax_name].get_ylim()[::-1])
+        axes[ax_name].minorticks_on()
+
+        xx, yy = np.meshgrid(np.linspace(*extent[0:2], hdr['NAXIS1']),
+                             np.linspace(*extent[2:], hdr['NAXIS2']))
+        sd = np.nanstd(data)
+        axes[ax_name].contour(xx, yy, data, levels=clevs * sd, colors='w')
+
+        noise_str = r'$\sigma=' f'{sd / 1e-6:.0f}' r'\,\mathrm{\mu Jy\, beam^{-1}}$'
+        axes[ax_name].text(0.05, 0.95, noise_str, va='top', ha='left',
+                           transform=axes[ax_name].transAxes, color='w')
+
+        freq_str = f'${freq / 1e9:.0f}' r'\,\mathrm{GHz}$'
+        axes[ax_name].text(0.95, 0.05, freq_str, va='bottom', ha='right',
+                           transform=axes[ax_name].transAxes, color='w')
+
+        add_beam(axes[ax_name], hdr['BMAJ'] * 3600., hdr['BMIN'] * 3600.,
+                 hdr['BPA'])
+
+    cb_mappable = ScalarMappable(norm=Normalize(vmin=vmin / 1e-6, vmax=vmax / 1e-6),
+                                 cmap=cmap)
+    plt.colorbar(cb_mappable, cax=cax, orientation=cb_rot)
+    cax.minorticks_on()
+
+    fig.text(0.5, 0.01, r'$\Delta x \, \left[ \mathrm{arcsec} \right]$',
+             transform=fig.transFigure, ha='center', va='bottom')
+
+    fig.text(0.01, 0.5, r'$\Delta y \, \left[ \mathrm{arcsec} \right]$',
+             transform=fig.transFigure, ha='left', va='center',
+             rotation=90.)
+
+    if savefig:
+        for ext in ('.pdf', '.png'):
+            plt.savefig(f"{savefig}{ext}", dpi=300, bbox_inches='tight')
+
+    plt.show()
 
 
 def load_fits_hdr_and_data(fits_file: str) -> Tuple[np.ndarray, np.ndarray]:
