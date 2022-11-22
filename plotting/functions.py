@@ -1188,7 +1188,7 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
     ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
              mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
 
-    ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
+    ax2.errorbar(freqs_a_imfit, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
                  ls='None', capsize=2)
 
     freqs_r86 = np.logspace(np.log10(np.min(xlims)),
