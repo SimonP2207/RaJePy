@@ -263,7 +263,7 @@ def approx_flux_expected_r86(jm: 'JetModel', freq: float, which: str):
 
     # Assume even density across jet if disc-wind prescription adopted
     if jm.params["power_laws"]["q^d_n"] != 0.:
-        mlr = jm.params["properties"]["mlr"] * 1.989e30 / con.year
+        mlr = jm.ss_jml(which)
         n_0 = mlr / (np.pi * jm.params['properties']['mu'] * atomic_mass("H") *
                      w_0 ** 2. * jm.params['properties']["v_0"] * 1e5)
     else:
@@ -339,7 +339,7 @@ def flux_expected_r86(jm, freq, which: str, y_max, y_min=None):
 
     # Assume even density across jet if disc-wind prescription adopted
     if jm.params["power_laws"]["q^d_n"] != 0.:
-        mlr = jm.params["properties"]["mlr"] * 1.989e30 / con.year
+        mlr = jm.ss_jml(which)
         n_0 = mlr / (np.pi * jm.params['properties']['mu'] * atomic_mass("H") *
                      w_0 ** 2. * jm.params['properties']["v_0"] * 1e5)
 

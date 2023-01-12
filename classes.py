@@ -47,6 +47,7 @@ class JetModel:
     Class to handle physical model of an ionised jet from a young stellar object
     """
     _arr_indexing = 'ij'  # numpy.meshgrid indexing type
+    _FLOAT_TYPE = np.float32
 
     @classmethod
     def load_model(cls, model_file: str) -> "JetModel":
@@ -92,33 +93,34 @@ class JetModel:
 
     @staticmethod
     def lz_to_grid_dims(params: Dict) -> Tuple[int, int, int]:
-        cs_au = params["grid"]["c_size"]
-        i_rads = np.radians(params["geometry"]["inc"])
-        pa_rads = np.radians(params["geometry"]["pa"])
+        """
+        Calculate grid dimensions from observed jet length (l_z) and other
+        parameters
+        """
+        # Calculate max extent of jet in x, y, and z directions
         l_xz_au = params['grid']['l_z'] * params['target']['dist']
+        xmax_au = l_xz_au * np.sin(np.radians(params["geometry"]["pa"]))
+        ymax_au = l_xz_au * np.tan(np.radians(90. - params["geometry"]["inc"]))
+        zmax_au = l_xz_au * np.cos(np.radians(params["geometry"]["pa"]))
 
-        xmax_au = l_xz_au * np.sin(pa_rads)
-        ymax_au = l_xz_au * np.tan(1.571 - i_rads)
-        zmax_au = l_xz_au * np.cos(pa_rads)
-
+        # Infer maximum value for r(x, y, z) in au
         rmax_au, _, __ = mgeom.xyz_to_rwp(xmax_au, ymax_au, zmax_au,
                                           params["geometry"]["inc"],
                                           params["geometry"]["pa"])
-        mr0 = mgeom.mod_r_0(params['geometry']['opang'],
-                            params['geometry']['epsilon'],
-                            params['geometry']['w_0'])
-        params["geometry"]["mod_r_0"] = mr0
 
+        # Calculate maximum value for w(x, y, z) in au
         wmax_au = mgeom.w_r(rmax_au,
                             params["geometry"]["w_0"],
                             params["geometry"]["mod_r_0"],
                             params["geometry"]["r_0"],
                             params["geometry"]["epsilon"])
-        wmax_cells = int(np.ceil(np.abs(wmax_au / cs_au)))
 
-        nx = int(np.ceil(np.abs(xmax_au / cs_au)))
-        ny = int(np.ceil(np.abs(ymax_au / cs_au)))
-        nz = int(np.ceil(np.abs(zmax_au / cs_au)))
+        # Now in number of cells
+        wmax_cells = int(np.ceil(np.abs(wmax_au / params["grid"]["c_size"])))
+
+        nx = int(np.ceil(np.abs(xmax_au / params["grid"]["c_size"])))
+        ny = int(np.ceil(np.abs(ymax_au / params["grid"]["c_size"])))
+        nz = int(np.ceil(np.abs(zmax_au / params["grid"]["c_size"])))
 
         # Make sure jet's width within cell grid. Especially pertinent if
         # inclination or position angles are 0, 90, 180 or 270 deg
@@ -171,7 +173,7 @@ class JetModel:
                             "str)")
 
         self._name = self.params['target']['name']
-        self._csize = np.float32(self.params['grid']['c_size'])
+        self._csize = np.float16(self.params['grid']['c_size'])
 
         # Automatically calculated parameters
         mr0 = mgeom.mod_r_0(self._params['geometry']['opang'],
@@ -221,6 +223,8 @@ class JetModel:
         self._nz = np.uint16(nz)  # number of cells in z
 
         # Create necessary class-instance attributes for all necessary grids
+        self._verts_inside = None  # Dict holding each vertex and if in boundary
+        self._n_verts_inside = None  # Number of vertices inside jet boundary
         self._ff = None  # cell fill factors
         self._areas = None  # cell projected areas along y-axis
         self._idxs = None  # Grid of cell indices
@@ -576,71 +580,108 @@ class JetModel:
         return self.grid[2][0][0]
 
     @property
-    def fill_factor_numpy(self) -> np.ndarray:
+    def verts_inside(self) -> Dict[int, npt.NDArray[bool]]:
         """
-        Calculate the fraction of each of the grid's cells falling within the
-        jet's hard boundary define by w(r) (see RaJePy.maths.geometry.w_r
-        method), or 'fill factors'
+        Return and/or calculate if cell vertices lie within the jet
+        boundary, over the whole grid. Returns a dict whose key values are the
+        different vertices' numbering (0 -> 7) and values are numpy array of
+        bools whereby True indicates the vertex is within the cell boundary and
+        False otherwise.
         """
-        if self._ff is not None:
-            return self._ff
+        if self._verts_inside is not None:
+            return self._verts_inside
 
+        # Dask multiprocessing parameters
+        # TODO: ncpu needs to be adjustable to user input parameters somehow
+        ncpu = mp.cpu_count()
+        chunk_size = list(self.xx.shape)
+        chunk_size[np.argmax(chunk_size)] = int(
+            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
+        )
 
-        if self.log:
-            self._log.add_entry(mtype="INFO",
-                                entry="Calculating cells' fill "
-                                      "factors/projected areas")
-
-        else:
-            print("INFO: Calculating cells' fill factors/projected areas")
-
-        # Assign to local variables for readability
-        w_0 = self.params['geometry']['w_0']
-        r_0 = self.params['geometry']['r_0']
-        mod_r_0 = self.params['geometry']['mod_r_0']
-        eps = self.params['geometry']['epsilon']
-        inc = self.params['geometry']['inc']
-        pa = self.params['geometry']['pa']
+        # Define vertex offsets for all 8 vertices of a voxel
         cs = self.csize
+        z_ = np.float16(0.)
+        vertex_offsets = ((z_, z_, z_),  # left-near-bottom vertex
+                          (cs, z_, z_),  # right-near-bottom vertex
+                          (z_, cs, z_),  # left-far-bottom vertex
+                          (cs, cs, z_),  # right-far-bottom vertex
+                          (z_, z_, cs),  # left-near-top vertex
+                          (cs, z_, cs),  # right-near-top vertex
+                          (z_, cs, cs),  # left-far-top vertex
+                          (cs, cs, cs))  # right-far-top vertex
 
-        ffs = np.zeros(np.shape(self.xx))
-        areas = np.zeros(
-            np.shape(self.xx))  # Areas as projected on to the y-axis
+        # Iterate through each of the 8 voxel vertices en masse across the grid
+        # to establish if they are within or outside the jet boundary for each
+        # voxel
+        self._verts_inside = {}
+        for i in range(0, 8):
+            self._verts_inside[i] = da.zeros(np.shape(self.xx),
+                                             chunks=chunk_size,
+                                             dtype=bool)
 
-        then = time.time()
+        for idx, (dx, dy, dz) in enumerate(vertex_offsets):
+            xx_vert = da.from_array(self.xx + dx, chunks=chunk_size)
+            yy_vert = da.from_array(self.yy + dy, chunks=chunk_size)
+            zz_vert = da.from_array(self.zz + dz, chunks=chunk_size)
 
-        n_verts_inside = np.zeros(np.shape(self.xx), dtype=np.uint8)
-        verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
-                 (0., 0., cs), (cs, 0., cs), (0., cs, cs), (cs, cs, cs))
+            # (r, w) coordinates of vertex
+            rv, wv = mgeom.xyz_to_rwp(xx_vert, yy_vert, zz_vert,
+                                      self.params['geometry']['inc'],
+                                      self.params['geometry']['pa'])[:2]
 
-        for dx, dy, dz in verts:
-            rv, wv = mgeom.xyz_to_rwp(self.xx + dx, self.yy + dy,
-                                      self.zz + dz, inc, pa)[:2]
-            wrv = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)
-            n_verts_inside = np.where((wrv >= wv) & (np.abs(rv) >= r_0),
-                                      n_verts_inside + 1, n_verts_inside)
-        ffs = np.where(n_verts_inside == 8, 1.0, ffs)
-        ffs = np.where((0 < n_verts_inside) & (n_verts_inside < 8), 0.5, ffs)
-        areas = np.where(0 < n_verts_inside, 1.0, areas)
+            # w-coordinate of jet-boundary at vertices' r-values
+            wrv = mgeom.w_r(rv, self.params['geometry']['w_0'],
+                            self.params['geometry']['mod_r_0'],
+                            self.params['geometry']['r_0'],
+                            self.params['geometry']['epsilon'])
 
-        now = time.time()
-        if self.log:
-            self.log.add_entry(mtype="INFO",
-                               entry=time.strftime('Finished in %Hh%Mm%Ss',
-                                                   time.gmtime(now - then)))
-        else:
-            print(time.strftime('INFO: Finished in %Hh%Mm%Ss',
-                                time.gmtime(now - then)))
+            # Increment number of vertices inside jet boundary by +1 for voxels
+            # whereby the iterated vertex is inside the jet boundary
+            self._verts_inside[idx] = da.where(
+                (wrv >= wv) & (np.abs(rv) >= self.params['geometry']['r_0']),
+                True, False
+            )
 
-        # Included as there are some, presumed floating point errors giving
-        # fill factors of ~1e-15 on occasion
-        ffs = np.where(ffs > 1e-6, ffs, np.NaN)
-        areas = np.where(areas > 1e-6, areas, np.NaN)
+            with TqdmCallback(desc=f"Calculating vertex {idx}:", unit='%',
+                              total=100.):
+                self._verts_inside[idx] = self._verts_inside[idx].compute()
 
-        self._ff = ffs
-        self._areas = areas
+        return self._verts_inside
 
-        return self._ff
+    @property
+    def n_verts_inside(self) -> np.ndarray:
+        """
+        Number of vertices inside jet boundary for each voxel
+        """
+        if self._n_verts_inside is not None:
+            return self._n_verts_inside
+
+        # Dask multiprocessing parameters
+        # TODO: ncpu needs to be adjustable to user input parameters somehow
+        ncpu = mp.cpu_count()
+        chunk_size = list(self.xx.shape)
+        chunk_size[np.argmax(chunk_size)] = int(
+            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
+        )
+
+        # Grid of integers indicating number of vertices within the jet boundary
+        # for each voxel
+        n_verts_inside = da.zeros(np.shape(self.xx), chunks=chunk_size,
+                                  dtype=np.uint8)
+
+        for i in range(8):
+            n_verts_inside = da.where(
+                self.verts_inside[i],
+                n_verts_inside + np.uint8(1),  # If vertex within boundary
+                n_verts_inside  # If vertex not within boundary
+            )
+
+        with TqdmCallback(desc="Calculating #vertices/voxel:", unit='%',
+                          total=100.):
+            self._n_verts_inside = n_verts_inside.compute()
+
+        return self._n_verts_inside
 
     @property
     def fill_factor(self) -> np.ndarray:
@@ -660,54 +701,57 @@ class JetModel:
         else:
             print("INFO: Calculating cells' fill factors/projected areas")
 
-        # Assign to local variables for readability
-        w_0 = self.params['geometry']['w_0']
-        r_0 = self.params['geometry']['r_0']
-        mod_r_0 = self.params['geometry']['mod_r_0']
-        eps = self.params['geometry']['epsilon']
-        inc = self.params['geometry']['inc']
-        pa = self.params['geometry']['pa']
-        cs = self.csize
-
-        # ffs = np.zeros(np.shape(self.xx))
-        ffs = da.zeros(np.shape(self.xx), dtype=np.half)
-        areas = np.zeros(
-            np.shape(self.xx))  # Areas as projected on to the y-axis
-        # diag = np.sqrt(cs ** 2. * 3.)  # Diagonal dimensions of cells (au)
-        # nvoxels = np.prod(np.shape(self.xx))
-        # count = 0
-        # progress = -1
         then = time.time()
-        ncpu = mp.cpu_count()
+        _ = self.n_verts_inside
 
-        chunk_size = list(self.xx.shape)
-        chunk_size[np.argmax(chunk_size)] = int(
-            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
-        )
+        # Projected areas within jet boundary, projected along the y-axis (i.e.
+        # the line of sight)
+        areas = np.zeros(np.shape(self.xx), dtype=np.float16)
 
-        n_verts_inside = da.zeros(np.shape(self.xx), chunks=chunk_size,
-                                  dtype=np.uint8)
-        verts = ((0., 0., 0.), (cs, 0., 0.), (0., cs, 0.), (cs, cs, 0.),
-                 (0., 0., cs), (cs, 0., cs), (0., cs, cs), (cs, cs, cs))
+        los_verts = np.sum([(self.verts_inside[0] | self.verts_inside[2]),
+                            (self.verts_inside[1] | self.verts_inside[3]),
+                            (self.verts_inside[4] | self.verts_inside[6]),
+                            (self.verts_inside[5] | self.verts_inside[7])],
+                           axis=0, dtype=np.uint8)
 
-        for dx, dy, dz in verts:
-            xx_vert = da.from_array(self.xx + dx, chunks=chunk_size)
-            yy_vert = da.from_array(self.yy + dy, chunks=chunk_size)
-            zz_vert = da.from_array(self.zz + dz, chunks=chunk_size)
-            rv, wv = mgeom.xyz_to_rwp(xx_vert, yy_vert, zz_vert, inc, pa)[:2]
-            wrv = mgeom.w_r(rv, w_0, mod_r_0, r_0, eps)
-            n_verts_inside = da.where((wrv >= wv) & (np.abs(rv) >= r_0),
-                                      n_verts_inside + 1, n_verts_inside)
+        # Fraction of voxels' volumes within the jet boundary, or 'fill factors'
+        ffs = da.zeros(np.shape(self.xx), dtype=np.float16)
 
-        ffs = da.where(n_verts_inside == 8,
-                       np.float16(1.0), ffs)
-        ffs = da.where((n_verts_inside > 0) & (n_verts_inside < 8),
-                       np.float16(1.0), ffs)
-        # for n_verts in range(1, 8):
-        #     ffs = da.where(n_verts_inside == n_verts,
-        #                    (n_verts * 2 + 1) / 16., ffs)
+        # Average area of cells with differing number of line-of-sight vertices
+        # within the jet boundary i.e. cell projected onto x/z plane. Average
+        # areas established via random generation of coordinates for
+        # intersection of jet boundary with cell edges whilst varying number of
+        # cell vertices within jet boundary
+        _AREA_FROM_N_LOS_VERTICES_INSIDE = {
+            0: np.float16(0.0),
+            1: np.float16(0.125),
+            2: np.float16(0.5),
+            3: np.float16(0.875),
+            4: np.float16(1.0),
+        }
 
-        areas = da.where(n_verts_inside > 0, np.float16(1.0), np.float16(0.0))
+        # Average fill factor of cells with differing number of vertices within
+        # the jet boundary i.e. cell projected onto the x/z plane. Average fill
+        # factors found with same method as for average areas (see above
+        # comment).
+        _FF_FROM_N_VERTICES_INSIDE = {
+            0: np.float16(0.0),
+            1: np.float16(0.020765),
+            2: np.float16(0.145145),
+            3: np.float16(0.247302),
+            4: np.float16(0.5),  # np.float16(0.538722),
+            5: np.float16(0.752698),
+            6: np.float16(0.854855),
+            7: np.float16(0.979235),
+            8: np.float16(1.0),
+        }
+
+        # Factors worked out by uniform random number generation of areas
+        for n_los_verts, area in _AREA_FROM_N_LOS_VERTICES_INSIDE.items():
+            areas = da.where(los_verts == n_los_verts, area, areas)
+
+        for n_verts, fill_factor in _FF_FROM_N_VERTICES_INSIDE.items():
+            ffs = da.where(self.n_verts_inside == n_verts, fill_factor, ffs)
 
         # Mask empty cells with NaNs
         ffs = da.where(ffs > 1e-6, ffs, np.NaN)
@@ -715,13 +759,15 @@ class JetModel:
 
         # Run cell fill-factor and area dask-computations and wrap in TQDM
         # progress bars
-        now = time.time()
-        with TqdmCallback(desc="Computing fill factors:", unit='%', total=100.):
+        with TqdmCallback(desc="     Computing fill factors:", unit='%',
+                          total=100.):
             self._ff = ffs.compute()
 
-        with TqdmCallback(desc="       Computing areas:", unit='%', total=100.):
+        with TqdmCallback(desc="            Computing areas:", unit='%',
+                          total=100.):
             self._areas = areas.compute()
 
+        now = time.time()
         if self.log:
             self.log.add_entry(mtype="INFO",
                                entry=time.strftime('Finished in %Hh%Mm%Ss',
@@ -764,7 +810,7 @@ class JetModel:
                      (r_0 + r + self.csize / 2.) / 2., r)
 
         ts = mgeom.t_rw(r, self.ww, self.params) * con.year
-        self.ts = ts.astype(np.float32)
+        self.ts = ts.astype(self._FLOAT_TYPE)
 
         return self.ts
 
@@ -781,7 +827,7 @@ class JetModel:
                            self._jml_t_rj(self.ts) / self._ss_jml_rj,
                            self._jml_t_bj(self.ts) / self._ss_jml_bj)
 
-        return chi_xyz.astype(np.float16)
+        return chi_xyz.astype(self._FLOAT_TYPE)
 
     @property
     def number_density(self) -> np.ndarray:
@@ -1079,7 +1125,8 @@ class JetModel:
                           freq: Union[float, npt.ArrayLike],
                           lte: bool = True,
                           savefits: Union[bool, str] = False,
-                          collapse: bool = True) -> np.ndarray:
+                          collapse: bool = True,
+                          chan_width: float = 1.) -> np.ndarray:
         """
         Return RRL optical depth as viewed along the y-axis
 
@@ -1097,6 +1144,8 @@ class JetModel:
         collapse : bool
             Whether to sum the optical depths along the line of sight axis,
             or return the 3-dimensional array of optical depts (default is True)
+        chan_width : float
+            Channel width [Hz]. Defaults to 1.
         Returns
         -------
         tau_rrl : numpy.ndarray
@@ -1141,14 +1190,14 @@ class JetModel:
                     self.save_fits(
                         miscf.reorder_axes(tau_rrl, ra_axis=1, dec_axis=2,
                                            axis3=0, axis3_type='freq'),
-                        savefits, 'tau', freq
+                        savefits, 'tau', freq, chan_width
                     )
                 else:
                     self.save_fits(
                         miscf.reorder_axes(tau_rrl, ra_axis=1, dec_axis=3,
                                            axis3=2, axis3_type='y',
                                            axis4=0, axis4_type='freq'),
-                        savefits, 'tau', freq
+                        savefits, 'tau', freq, chan_width
                     )
 
         else:
@@ -1165,13 +1214,13 @@ class JetModel:
                 if collapse:
                     self.save_fits(
                         miscf.reorder_axes(tau_rrl, ra_axis=0, dec_axis=1),
-                        savefits, 'tau', freq
+                        savefits, 'tau', freq, chan_width
                     )
                 else:
                     self.save_fits(
                         miscf.reorder_axes(tau_rrl, ra_axis=0, dec_axis=2,
                                            axis3=1, axis3_type='y'),
-                        savefits, 'tau', freq
+                        savefits, 'tau', freq, chan_width
                     )
 
         return tau_rrl
@@ -1179,7 +1228,8 @@ class JetModel:
     def intensity_rrl(self, rrl: str,
                       freq: Union[float, Union[np.ndarray, List[float]]],
                       lte: bool = True,
-                      savefits: Union[bool, str] = False) -> np.ndarray:
+                      savefits: Union[bool, str] = False,
+                      chan_width: float = 1.) -> np.ndarray:
         """
         Radio intensity as viewed along x-axis (in W m^-2 Hz^-1 sr^-1)
 
@@ -1221,7 +1271,7 @@ class JetModel:
                 self.save_fits(
                     miscf.reorder_axes(ints_rrl, ra_axis=1, dec_axis=2,
                                        axis3=0, axis3_type='freq'),
-                    savefits, 'intensity', freq
+                    savefits, 'intensity', freq, chan_width
                 )
 
         else:
@@ -1232,7 +1282,7 @@ class JetModel:
             if savefits:
                 self.save_fits(
                     miscf.reorder_axes(ints_rrl, ra_axis=0, dec_axis=1),
-                    savefits, 'intensity', freq
+                    savefits, 'intensity', freq, chan_width
                 )
 
         return ints_rrl
@@ -1240,7 +1290,8 @@ class JetModel:
     def flux_rrl(self, rrl: str,
                  freq: Union[float, Union[np.ndarray, List[float]]],
                  lte: bool = True, contsub: bool = True,
-                 savefits: Union[bool, str] = False) -> np.ndarray:
+                 savefits: Union[bool, str] = False,
+                 chan_width: float = 1.) -> np.ndarray:
         """
         Return RRL flux (in Jy). Note these are the continuum-subtracted fluxes
 
@@ -1258,6 +1309,8 @@ class JetModel:
             True)
         savefits : bool, str
             False or full path to save calculated optical depths as .fits file
+        chan_width : float
+            Channel width [Hz]. Defaults to 1.
 
         Returns
         -------
@@ -1279,7 +1332,7 @@ class JetModel:
                 self.save_fits(
                     miscf.reorder_axes(fluxes, ra_axis=1, dec_axis=2, axis3=0,
                                        axis3_type='freq'),
-                    savefits, 'flux', freq
+                    savefits, 'flux', freq, chan_width
                 )
 
         else:
@@ -1293,7 +1346,7 @@ class JetModel:
             if savefits:
                 self.save_fits(
                     miscf.reorder_axes(fluxes, ra_axis=0, dec_axis=1),
-                    savefits, 'flux', freq
+                    savefits, 'flux', freq, chan_width
                 )
 
         return fluxes
@@ -1301,7 +1354,8 @@ class JetModel:
     def optical_depth_ff(self,
                          freq: Union[float, Union[np.ndarray, List[float]]],
                          savefits: Union[bool, str] = False,
-                         collapse: bool = True) -> np.ndarray:
+                         collapse: bool = True,
+                         chan_width: float = 1.) -> np.ndarray:
         """
         Return free-free optical depth as viewed along the y-axis
 
@@ -1314,6 +1368,8 @@ class JetModel:
         collapse : bool
             Whether to sum the optical depths along the line of sight axis,
             or return the 3-dimensional array of optical depts (default is True)
+        chan_width : float
+            Channel width [Hz]. Defaults to 1.
         Returns
         -------
         tau_ff : numpy.ndarray
@@ -1352,14 +1408,14 @@ class JetModel:
                         self.save_fits(
                             miscf.reorder_axes(tff, ra_axis=1, dec_axis=2,
                                                axis3=0, axis3_type='freq'),
-                            savefits, 'tau', freq
+                            savefits, 'tau', freq, chan_width
                         )
                     else:
                         self.save_fits(
                             miscf.reorder_axes(tff, ra_axis=1, dec_axis=3,
                                                axis3=2, axis3_type='y',
                                                axis4=0, axis4_type='freq'),
-                            savefits, 'tau', freq
+                            savefits, 'tau', freq, chan_width
                         )
 
         else:
@@ -1383,19 +1439,20 @@ class JetModel:
                 if collapse:
                     self.save_fits(
                         miscf.reorder_axes(tff, ra_axis=0, dec_axis=1),
-                        savefits, 'tau', freq
+                        savefits, 'tau', freq, chan_width
                     )
                 else:
                     self.save_fits(
                         miscf.reorder_axes(tff, ra_axis=0, dec_axis=2,
                                            axis3=1, axis3_type='y'),
-                        savefits, 'tau', freq
+                        savefits, 'tau', freq, chan_width
                     )
 
         return tff
 
     def intensity_ff(self, freq: Union[float, Union[np.ndarray, List[float]]],
-                     savefits: Union[bool, str] = False) -> np.ndarray:
+                     savefits: Union[bool, str] = False,
+                     chan_width: float = 1.) -> np.ndarray:
         """
         Radio intensity as viewed along y-axis (in W m^-2 Hz^-1 sr^-1)
 
@@ -1405,6 +1462,8 @@ class JetModel:
             Frequency of observation (Hz).
         savefits : bool, str
             False or full path to save calculated optical depths as .fits file
+        chan_width : float
+            Channel width [Hz]. Defaults to 1.
 
         Returns
         -------
@@ -1426,7 +1485,7 @@ class JetModel:
                 self.save_fits(
                     miscf.reorder_axes(ints_ff, ra_axis=1, dec_axis=2,
                                        axis3=0, axis3_type='freq'),
-                    savefits, 'intensity', freq
+                    savefits, 'intensity', freq, chan_width
                 )
         else:
             temp_b = np.nanmean(np.where(ts > 0., ts, np.NaN),
@@ -1438,13 +1497,14 @@ class JetModel:
             if savefits:
                 self.save_fits(
                     miscf.reorder_axes(ints_ff, ra_axis=0, dec_axis=1),
-                    savefits, 'intensity', freq
+                    savefits, 'intensity', freq, chan_width
                 )
 
         return ints_ff
 
     def flux_ff(self, freq: Union[float, Union[np.ndarray, List[float]]],
-                savefits: Union[bool, str] = False) -> np.ndarray:
+                savefits: Union[bool, str] = False,
+                chan_width: float = 1.) -> np.ndarray:
         """
         Return flux (in Jy)
 
@@ -1454,6 +1514,8 @@ class JetModel:
             Frequency of observation (Hz).
         savefits : bool, str
             False or full path to save calculated optical depths as .fits file
+        chan_width : float
+            Channel width [Hz]. Defaults to 1.
 
         Returns
         -------
@@ -1472,7 +1534,7 @@ class JetModel:
                 self.save_fits(
                     miscf.reorder_axes(fluxes, ra_axis=1, dec_axis=2,
                                        axis3=0, axis3_type='freq'),
-                    savefits, 'flux', freq
+                    savefits, 'flux', freq, chan_width
                 )
         else:
             ints = self.intensity_ff(freq)
@@ -1483,13 +1545,14 @@ class JetModel:
             if savefits:
                 self.save_fits(
                     miscf.reorder_axes(fluxes, ra_axis=0, dec_axis=1),
-                    savefits, 'flux', freq
+                    savefits, 'flux', freq, chan_width
                 )
 
         return fluxes
 
     def save_fits(self, data: np.ndarray, filename: str, image_type: str,
-                  freq: Union[float, list, np.ndarray, None] = None):
+                  freq: Union[float, list, np.ndarray, None] = None,
+                  chan_width: float = 1.):
         """
         Save .fits file of input data. For the data array, axis-0 must
         correspond to declination, axis-1 to right ascension and axis-3 to
@@ -1506,6 +1569,8 @@ class JetModel:
             One of 'flux', 'tau' or 'em'. The type of image data saved.
         freq : float
             Radio frequency of image (ignored if image_type is 'em')
+        chan_width : float
+            Channel width [Hz]. Defaults to 1.
 
         Returns
         -------
@@ -1520,6 +1585,11 @@ class JetModel:
             raise ValueError("arg image_type must be one of 'flux', 'tau' or "
                              "'em'")
 
+        bunit = {'flux': 'JY/PIXEL',
+                 'intensity': 'W m^-2 Hz^-1 sr^-1',
+                 'em': 'pc cm^-6',
+                 'tau': 'dimensionless'}[image_type]
+
         c = SkyCoord(self.params['target']['ra'],
                      self.params['target']['dec'],
                      unit=(u.hourangle, u.degree), frame='fk5')
@@ -1533,13 +1603,16 @@ class JetModel:
         if ndims not in (2, 3):
             raise ValueError(f"Unexpected number of data dimensions ({ndims})")
 
-        hdu = fits.PrimaryHDU(data)
+        if image_type != 'em' and ndims == 2:
+            hdu = fits.PrimaryHDU(data[np.newaxis, ...])
+        else:
+            hdu = fits.PrimaryHDU(data)
 
         # hdu = fits.PrimaryHDU(np.array([data]))
         hdul = fits.HDUList([hdu])
         hdr = hdul[0].header
 
-        hdr['AUTHOR'] = 'S.J.D.Purser'
+        hdr['AUTHOR'] = 'RaJePy'
         hdr['OBJECT'] = self.params['target']['name']
         hdr['CTYPE1'] = 'RA---TAN'
         hdr.comments['CTYPE1'] = 'x-coord type is RA Tan Gnomonic projection'
@@ -1561,36 +1634,16 @@ class JetModel:
         hdr.comments['CDELT2'] = 'Pixel size in DEC (deg)'
 
         if image_type in ('flux', 'tau', 'intensity'):
-            if ndims == 3:
-                nchan = len(freq)
-                if nchan != 1:
-                    chan_width = freq[1] - freq[0]
-                else:
-                    chan_width = 1.
-                hdr['CTYPE3'] = 'FREQ'
-                hdr.comments['CTYPE3'] = 'Spectral axis (frequency)'
-                hdr['CRPIX3'] = nchan / 2. + 0.5
-                hdr.comments['CRPIX3'] = 'Reference frequency (channel number)'
-                hdr['CRVAL3'] = freq[len(freq) // 2 - 1] + chan_width / 2
-                hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
-                hdr['CDELT3'] = chan_width
-                hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
-            else:
-                hdr['CDELT3'] = 1.
-                hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
-                hdr['CRPIX3'] = 0.5
-                hdr.comments['CRPIX3'] = 'Reference frequency (channel number)'
-                hdr['CRVAL3'] = freq[0]
-                hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
+            hdr['CTYPE3'] = 'FREQ'
+            hdr.comments['CTYPE3'] = 'Spectral axis (frequency)'
+            hdr['CRPIX3'] = 1.
+            hdr.comments['CRPIX3'] = 'Reference frequency (channel number)'
+            hdr['CRVAL3'] = freq[0]
+            hdr.comments['CRVAL3'] = 'Reference frequency (Hz)'
+            hdr['CDELT3'] = chan_width
+            hdr.comments['CDELT3'] = 'Frequency increment (Hz)'
 
-        if image_type == 'flux':
-            hdr['BUNIT'] = 'Jy pixel^-1'
-        elif image_type == 'intensity':
-            hdr['BUNIT'] = 'W m^-2 Hz^-1 sr^-1'
-        elif image_type == 'em':
-            hdr['BUNIT'] = 'pc cm^-6'
-        elif image_type == 'tau':
-            hdr['BUNIT'] = 'dimensionless'
+        hdr['BUNIT'] = bunit
 
         s_hist = self.__str__().split('\n')
         hdr['HISTORY'] = (' ' * (72 - len(s_hist[0]))).join(s_hist)
@@ -2311,7 +2364,9 @@ class Pipeline:
                                 savefig=os.sep.join([self.dcy, 'GridPlot.pdf']))
         except Exception as e:
             err_type = str(type(e)).split("'")[1]
-            self.log.add_entry('ERROR', "Matplotlib threw the following error:"
+            self.log.add_entry('ERROR',
+                               "Matplotlib threw the following error whilst "
+                               "trying to plot model geometry:"
                                         f"\n{err_type}: {e}")
 
 
@@ -2321,15 +2376,17 @@ class Pipeline:
                                                         'JMLPlot.pdf']))
         except Exception as e:
             err_type = str(type(e)).split("'")[1]
-            self.log.add_entry('ERROR', "Matplotlib threw the following error:"
-                                        f"\n{err_type}: {e}")
+            self.log.add_entry('ERROR',
+                               "Matplotlib threw the following error whilst "
+                               "trying to plot JML-profile:"
+                               f"\n{err_type}: {e}")
 
-
+        n_runs = len(self.runs)
         for idx, run in enumerate(self.runs):
             self.model.time = run.year * con.year
             self.log.add_entry(mtype="INFO",
-                               entry="Executing run #{} -> Details:\n{}"
-                                     "".format(idx + 1, run.__str__()))
+                               entry="Executing run #{} / {} -> Details:\n{}"
+                                     "".format(idx + 1, n_runs, str(run)))
             if run.completed and resume and not clobber:
                 self.log.add_entry(mtype="INFO",
                                    entry="Run #{} previously completed, "
@@ -2388,7 +2445,8 @@ class Pipeline:
                                                      "and saving to "
                                                      f"{run.fits_tau}")
                             self.model.optical_depth_ff(run.chan_freqs,
-                                                        savefits=run.fits_tau)
+                                                        savefits=run.fits_tau,
+                                                        chan_width=run.chanwidth)
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Optical depths already "
@@ -2400,7 +2458,8 @@ class Pipeline:
                                                      "saving to "
                                                      f"{run.fits_flux}")
                             fluxes = self.model.flux_ff(run.chan_freqs,
-                                                        savefits=run.fits_flux)
+                                                        savefits=run.fits_flux,
+                                                        chan_width=run.chanwidth)
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already exist -> "
@@ -2415,7 +2474,8 @@ class Pipeline:
                                                      f"{run.fits_tau}")
                             self.model.optical_depth_rrl(run.line,
                                                          run.chan_freqs,
-                                                         savefits=run.fits_tau)
+                                                         savefits=run.fits_tau,
+                                                         chan_width=run.chanwidth)
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Optical depths already "
@@ -2429,7 +2489,8 @@ class Pipeline:
                             fluxes = self.model.flux_rrl(run.line,
                                                          run.chan_freqs,
                                                          contsub=False,
-                                                         savefits=run.fits_flux)
+                                                         savefits=run.fits_flux,
+                                                         chan_width=run.chanwidth)
                         else:
                             self.log.add_entry(mtype="INFO",
                                                entry="Fluxes already exist -> "
