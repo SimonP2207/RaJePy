@@ -87,6 +87,12 @@ class JetModel:
         if loaded['areas'] is not None:
             new_jm._areas = loaded['areas']
 
+        if loaded['ts'] is not None:
+            new_jm._ts = loaded['ts']
+
+        if loaded['nd'] is not None:
+            new_jm._nd = loaded['nd']
+
         new_jm.time = loaded['time']
 
         return new_jm
@@ -173,7 +179,7 @@ class JetModel:
                             "str)")
 
         self._name = self.params['target']['name']
-        self._csize = np.float16(self.params['grid']['c_size'])
+        self._csize = self._FLOAT_TYPE(self.params['grid']['c_size'])
 
         # Automatically calculated parameters
         mr0 = mgeom.mod_r_0(self._params['geometry']['opang'],
@@ -392,17 +398,21 @@ class JetModel:
         self._time = new_time
 
     def jml_t(self, which: str) -> Callable[[Union[float, np.ndarray]],
-                                             Union[float, np.ndarray]]:
+                                            Union[float, np.ndarray]]:
         """Callable for red jet-mass loss rate as a function of time, which is
         the callable's sole arg. [kg/s]"""
-        def func(which):
+
+        def func(which_: str):
+            """Wrapped function"""
             def inner_func(t):
+                """Inner wrapped function"""
                 jml = 0.
-                if 'R' in which:
+                if 'R' in which_:
                     jml += self._jml_t_rj(t)
-                if 'B' in which:
+                if 'B' in which_:
                     jml += self._jml_t_bj(t)
                 return jml
+
             return inner_func
 
         return func(which)
@@ -614,7 +624,7 @@ class JetModel:
         # Iterate through each of the 8 voxel vertices en masse across the grid
         # to establish if they are within or outside the jet boundary for each
         # voxel
-        self._verts_inside = {}
+        self._verts_inside: dict = {}
         for i in range(0, 8):
             self._verts_inside[i] = da.zeros(np.shape(self.xx),
                                              chunks=chunk_size,
@@ -702,7 +712,7 @@ class JetModel:
             print("INFO: Calculating cells' fill factors/projected areas")
 
         then = time.time()
-        _ = self.n_verts_inside
+        _ = self.n_verts_inside  # Calculate n_verts_inside if not already done
 
         # Projected areas within jet boundary, projected along the y-axis (i.e.
         # the line of sight)
@@ -759,12 +769,12 @@ class JetModel:
 
         # Run cell fill-factor and area dask-computations and wrap in TQDM
         # progress bars
-        with TqdmCallback(desc="     Computing fill factors:", unit='%',
-                          total=100.):
+        with TqdmCallback(desc=format("Computing fill factors:", ">28"),
+                          unit='%', total=100.):
             self._ff = ffs.compute()
 
-        with TqdmCallback(desc="            Computing areas:", unit='%',
-                          total=100.):
+        with TqdmCallback(desc=format("Computing areas:", ">28"),
+                          unit='%', total=100.):
             self._areas = areas.compute()
 
         now = time.time()
@@ -794,7 +804,7 @@ class JetModel:
         return self._areas
 
     @property
-    def ts(self) -> np.ndarray:
+    def ts(self) -> npt.NDArray:
         """
         Time from launch of material in cell compared to current model time in
         seconds
@@ -802,24 +812,54 @@ class JetModel:
         if self._ts is not None:
             return self.time - self._ts
 
+        from functools import partial
+
         self.log.add_entry('INFO', "Computing t(r,w)")
 
+        ncpu = mp.cpu_count()
+        chunk_size = list(self.xx.shape)
+        chunk_size[np.argmax(chunk_size)] = int(
+            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
+        )
+
         r_0 = self.params['geometry']['r_0']
-        r = np.abs(self.rr)
-        r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+        r = da.from_array(np.abs(self.rr), chunks=chunk_size)
+        #
+        # # If the cell interesects the base of the jet, calculate the average
+        # # r-value of that cell from the jet base (at r_0) to the distal (from
+        # # the jet base) edge of the cell
+        r = da.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
                      (r_0 + r + self.csize / 2.) / 2., r)
 
-        ts = mgeom.t_rw(r, self.ww, self.params) * con.year
-        self.ts = ts.astype(self._FLOAT_TYPE)
+        # r = np.abs(self.rr)
 
-        return self.ts
+        # If the cell interesects the base of the jet, calculate the average
+        # r-value of that cell from the jet base (at r_0) to the distal (from
+        # the jet base) edge of the cell
+        # r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
+        #              (r_0 + r + self.csize / 2.) / 2., r)
+        # ww = da.from_array(self.ww, chunks=chunk_size)
+
+        # ts = mgeom.t_rw(r, ww, self.params) * con.year
+        t_rw = partial(mgeom.t_rw, params=self.params)
+        ts = da.apply_gufunc(t_rw, "(), ()->()", r,
+                             da.from_array(np.abs(self.ww), chunks=chunk_size))
+        ts *= con.year
+
+        # Run cell fill-factor and area dask-computations and wrap in TQDM
+        # progress bars
+        with TqdmCallback(desc=format("Computing t(r,w):", ">28"),
+                          maxinterval=1.):
+            self.ts = ts.compute()
+
+        return self.time - self._ts
 
     @ts.setter
-    def ts(self, new_ts: np.ndarray):
+    def ts(self, new_ts: npt.NDArray) -> npt.NDArray:
         self._ts = new_ts
 
     @property
-    def chi_xyz(self) -> np.ndarray:
+    def chi_xyz(self) -> npt.NDArray:
         """
         Chi factor (the burst factor) as a function of position.
         """
@@ -852,8 +892,6 @@ class JetModel:
         # nd = miscf.provide_progress_bar(mgeom.cell_value, estimated_time=60,
         #                                 args=(n_0, mgeom.rho(r, r0, mr0),
         #                                       self.rreff, r1, q_n, q_nd))
-        # TODO: Convert to Dask array operations
-
 
         # nd = mgeom.cell_value(n_0, mgeom.rho(r, r0, mr0), self.rreff,
         #                       r1, q_n, q_nd)
@@ -1688,10 +1726,6 @@ class JetModel:
     def ejections(self) -> Dict:
         return self._ejections
 
-    @property
-    def _ss_jml(self):
-        pass
-
     def ss_jml(self, which: str):
         if which == 'R':
             return self._ss_jml_rj
@@ -1707,6 +1741,8 @@ class JetModel:
               'areas': None if self._areas is None else self.areas,
               'ffs': None if self._ff is None else self.fill_factor,
               'time': self.time,
+              'ts': self.ts,
+              'nd': self._nd,
               'log': self.log}
         self.log.add_entry("INFO", "Saving physical model to "
                                    "{}".format(filename))
@@ -1715,6 +1751,13 @@ class JetModel:
 
 
 class ContinuumRun:
+    """
+    Class handling/tracking setup parameters and data products for a single run,
+    using a single set of parameters (radiative transfer and synthetic
+    observing) defining a Continuum (wide-bandwidth, non-spectral line)
+    observation.
+    """
+
     def __init__(self, dcy: str, year: float,
                  freq: Union[float, None] = None,
                  bandwidth: Union[float, None] = None,
@@ -1722,7 +1765,27 @@ class ContinuumRun:
                  t_obs: Union[float, None] = None,
                  t_int: Union[float, None] = None,
                  tscop: Union[Tuple[str, str], None] = None):
-
+        """
+        Parameters
+        ----------
+        dcy
+            Full path to directory in which to store data products
+        year
+            Model time [yr]
+        freq
+            Frequency of observation [Hz]
+        bandwidth
+            Total bandwidth [Hz]. Defaults to 1
+        chanwidth
+            Channel width [Hz]. Defaults to 1
+        t_obs
+            Total time on source [s]
+        t_int
+            Visibility integration time [s]
+        tscop
+            Telecsope with which to conduct synthetic observations as a 2-tuple
+            of telescope name and telescope configuration e.g. ('VLA', 'A')
+        """
         # Protected, 'immutable' attributes
         self._year = year
         self._dcy = dcy
@@ -1817,6 +1880,7 @@ class ContinuumRun:
 
     @property
     def obs_type(self) -> str:
+        """Type of run. One of 'continuum' or 'rrl'"""
         return self._obs_type
 
     @property
@@ -1843,65 +1907,88 @@ class ContinuumRun:
 
     @property
     def year(self) -> float:
+        """Model time [years]"""
         return self._year
 
     @property
     def day(self) -> float:
+        """Model time [days]"""
         return int(self.year * 365.)
 
     @property
     def freq(self) -> float:
+        """Central observing frequency [Hz]"""
         return self._freq
 
     @property
     def bandwidth(self) -> float:
+        """Total bandwidth [Hz]"""
         return self._bandwidth
 
     @property
     def chanwidth(self) -> float:
+        """Channel width [Hz]"""
         return self._chanwidth
 
     @property
+    def nchan(self) -> int:
+        """Number of frequency channels"""
+        return int(self.bandwidth / self.chanwidth)
+
+    @property
+    def chan_freqs(self) -> np.ndarray:
+        """Array of frequencies for all channels"""
+        chan1 = self.freq - self.bandwidth / 2. + self.chanwidth / 2.
+        return chan1 + np.arange(self.nchan) * self.chanwidth
+
+    @property
     def t_obs(self) -> float:
+        """Total time on source [s]"""
         return self._t_obs
 
     @property
     def t_int(self) -> float:
+        """Integration time [s]"""
         return self._t_int
 
     @property
     def tscop(self) -> Tuple[str, str]:
+        """Observing telescope and its configuration"""
         return self._tscop
 
     @property
     def fits_flux(self) -> str:
+        """Full path for .fits cube of fluxes produced via radiative transfer"""
         return self.rt_dcy + os.sep + '_'.join(['Flux', 'Day' + str(self.day),
                                                 miscf.freq_str(self.freq)]) + \
                '.fits'
 
     @property
     def fits_tau(self) -> str:
+        """
+        Full path for .fits cube of optical depths produced via radiative
+        transfer
+        """
         return self.rt_dcy + os.sep + '_'.join(['Tau', 'Day' + str(self.day),
                                                 miscf.freq_str(self.freq)]) + \
                '.fits'
 
     @property
     def fits_em(self) -> str:
+        """Full path for .fits image of calculated emission measures"""
         return self.rt_dcy + os.sep + '_'.join(['EM', 'Day' + str(self.day),
                                                 miscf.freq_str(self.freq)]) + \
                '.fits'
 
-    @property
-    def nchan(self) -> int:
-        return int(self.bandwidth / self.chanwidth)
-
-    @property
-    def chan_freqs(self) -> np.ndarray:
-        chan1 = self.freq - self.bandwidth / 2. + self.chanwidth / 2.
-        return chan1 + np.arange(self.nchan) * self.chanwidth
-
 
 class RRLRun(ContinuumRun):
+    """
+    Class handling/tracking setup parameters and data products for a single run,
+    using a single set of parameters (radiative transfer and synthetic
+    observing) defining a radio-recombination line (narrow-bandwidth, spectral
+    line) observation.
+    """
+
     def __init__(self, dcy: str, year: float,
                  line: Union[str, None] = None,
                  bandwidth: Union[float, None] = None,
@@ -1909,6 +1996,27 @@ class RRLRun(ContinuumRun):
                  t_obs: Union[float, None] = None,
                  t_int: Union[float, None] = None,
                  tscp: Union[Tuple[str, str], None] = None):
+        """
+        Parameters
+        ----------
+        dcy
+            Full path to directory in which to store data products
+        year
+            Model time [yr]
+        line
+            Radio recombination line to observe as a str e.g. 'H56a'
+        bandwidth
+            Total bandwidth [Hz]. Defaults to 1
+        chanwidth
+            Channel width [Hz]. Defaults to 1
+        t_obs
+            Total time on source [s]
+        t_int
+            Visibility integration time [s]
+        tscp
+            Telecsope with which to conduct synthetic observations as a 2-tuple
+            of telescope name and telescope configuration e.g. ('VLA', 'A')
+        """
         self.line = line
         freq = mrrl.rrl_nu_0(*mrrl.rrl_parser(line))
 
@@ -1954,17 +2062,23 @@ class RRLRun(ContinuumRun):
 
     @property
     def fits_flux(self) -> str:
-        return self.rt_dcy + os.sep + '_'.join(['Flux', 'Day' + str(self.day),
+        """Full path for .fits cube of fluxes produced via radiative transfer"""
+        return self.rt_dcy + os.sep + '_'.join(['Flux', f'Day{self.day}',
                                                 self.line]) + '.fits'
 
     @property
     def fits_tau(self) -> str:
-        return self.rt_dcy + os.sep + '_'.join(['Tau', 'Day' + str(self.day),
+        """
+        Full path for .fits cube of optical depths produced via radiative
+        transfer
+        """
+        return self.rt_dcy + os.sep + '_'.join(['Tau', f'Day{self.day}',
                                                 self.line]) + '.fits'
 
     @property
     def fits_em(self) -> str:
-        return self.rt_dcy + os.sep + '_'.join(['EM', 'Day' + str(self.day),
+        """Full path for .fits image of calculated emission measures"""
+        return self.rt_dcy + os.sep + '_'.join(['EM', f'Day{self.day}',
                                                 self.line]) + '.fits'
 
 
@@ -1981,8 +2095,6 @@ class Pipeline:
 
         Parameters
         ----------
-        cls : Pipeline
-            DESCRIPTION.
         load_file : str
             Full path to saved ModelRun file (pickle file).
 
@@ -2367,8 +2479,7 @@ class Pipeline:
             self.log.add_entry('ERROR',
                                "Matplotlib threw the following error whilst "
                                "trying to plot model geometry:"
-                                        f"\n{err_type}: {e}")
-
+                               f"\n{err_type}: {e}")
 
         try:
             pfunc.jml_profile_plot(self, show_plot=False,

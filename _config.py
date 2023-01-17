@@ -22,4 +22,3 @@ plots = {"dims": {"column": 3.32153,  # inches
                               "Source": 'https://github.com/SimonP2207/RaJePy'}
                       }
          }
-

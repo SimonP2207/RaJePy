@@ -215,21 +215,16 @@ class Entry(metaclass=EntryMetaClass):
                         self.timestamp)
 
     def __str__(self):
-        preamble = ':: '.join([self.time_str(),
-                               format(self.mtype, str(Entry.mtype_max_len))])
-
-        if not self.timestamp:
-            preamble = ' ' * len(preamble)
+        preamble = ' '
+        if self.timestamp:
+            preamble = ':: '.join([self.time_str(),
+                                   format(self.mtype,
+                                   str(Entry.mtype_max_len))])
 
         fmt_message = self.message.split('\n')
-        if len(fmt_message) > 1:
-            for i, line in enumerate(fmt_message):
-                if i != 0:
-                    fmt_message[i] = ' ' * (len(preamble) + 2) + line
+        fmt_message = [': '.join([preamble, m]) for m in fmt_message]
 
-        fmt_message = '\n'.join(fmt_message)
-
-        return ': '.join([preamble, fmt_message])
+        return '\n'.join(fmt_message)
 
     @property
     def rtime(self):
