@@ -243,7 +243,7 @@ class JetModel:
         self._xi = None  # grid of cell ionisation fractions
         self._temp = None  # grid of cell temperatures
         self._v = None  # 3-tuple of cell x, y and z velocity components
-        self._ss_jml_rb_frac = self.params["properties"]["mlr_rj"] / \
+        self._ss_jml_rb_frac = self.params["properties"]["mlr_rj"] /\
                                self.params["properties"]["mlr_bj"]
         self._ss_jml_bj = self.params["properties"]["mlr_bj"]
         self._ss_jml_bj *= 1.989e30 / con.year
@@ -601,6 +601,8 @@ class JetModel:
         if self._verts_inside is not None:
             return self._verts_inside
 
+        from .maths.dask import geometry as mgeom
+
         # Dask multiprocessing parameters
         # TODO: ncpu needs to be adjustable to user input parameters somehow
         ncpu = mp.cpu_count()
@@ -812,22 +814,32 @@ class JetModel:
         if self._ts is not None:
             return self.time - self._ts
 
-        from functools import partial
+        from .maths.dask import geometry as mgeom
 
         self.log.add_entry('INFO', "Computing t(r,w)")
 
-        ncpu = mp.cpu_count()
-        chunk_size = list(self.xx.shape)
-        chunk_size[np.argmax(chunk_size)] = int(
-            (chunk_size[np.argmax(chunk_size)] / ncpu) + 1
-        )
+        # Chunk sizes of between 100MB and 1GB are ok according to online
+        # forums, however from experimenting, I find a chunk size of ~20MB to be
+        # good. Forums do state that more than 10000 chunks affects performance,
+        # however
+        size = self.xx.nbytes
+        shape = self.xx.shape
+        dtype = np.float32
+
+        dtype_sizes = {np.float16: 2, np.float32: 4, np.float64: 8}
+
+        desired_chunk_nbytes = 20 * 1e6  # 20MB
+        size_of_array = np.prod(shape) * dtype_sizes[dtype]
+        n_chunks = size_of_array / desired_chunk_nbytes
+        chunk_dim = int(n_chunks ** (1. / len(shape)))
+        chunk_shape = tuple([arr_dim // chunk_dim for arr_dim in shape])
 
         r_0 = self.params['geometry']['r_0']
-        r = da.from_array(np.abs(self.rr), chunks=chunk_size)
-        #
-        # # If the cell interesects the base of the jet, calculate the average
-        # # r-value of that cell from the jet base (at r_0) to the distal (from
-        # # the jet base) edge of the cell
+        r = da.from_array(da.abs(self.rr), chunks=chunk_shape)
+
+        # If the cell interesects the base of the jet, calculate the average
+        # r-value of that cell from the jet base (at r_0) to the distal (from
+        # the jet base) edge of the cell
         r = da.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
                      (r_0 + r + self.csize / 2.) / 2., r)
 
@@ -838,12 +850,9 @@ class JetModel:
         # the jet base) edge of the cell
         # r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
         #              (r_0 + r + self.csize / 2.) / 2., r)
-        # ww = da.from_array(self.ww, chunks=chunk_size)
+        w = da.from_array(self.ww, chunks=chunk_shape)
 
-        # ts = mgeom.t_rw(r, ww, self.params) * con.year
-        t_rw = partial(mgeom.t_rw, params=self.params)
-        ts = da.apply_gufunc(t_rw, "(), ()->()", r,
-                             da.from_array(np.abs(self.ww), chunks=chunk_size))
+        ts = mgeom.t_rw(r, w, params=self.params)
         ts *= con.year
 
         # Run cell fill-factor and area dask-computations and wrap in TQDM
@@ -874,6 +883,8 @@ class JetModel:
         if self._nd is not None:
             return self._nd * self.chi_xyz
 
+        from .maths.dask import geometry as mgeom
+
         self.log.add_entry('INFO', "Computing number densities")
 
         r1 = self.params["target"]["R_1"]
@@ -886,22 +897,6 @@ class JetModel:
         r = np.abs(self.rr)
         r = np.where((r < r0) & ((r + self.csize / 2.) >= r0),
                      (r0 + r + self.csize / 2.) / 2., r)
-        # nd = n_0 * mgeom.rho(self.rr, r0, mr0) ** q_n * \
-        #      (self.rreff / r1) ** q_nd
-
-        # nd = miscf.provide_progress_bar(mgeom.cell_value, estimated_time=60,
-        #                                 args=(n_0, mgeom.rho(r, r0, mr0),
-        #                                       self.rreff, r1, q_n, q_nd))
-
-        # nd = mgeom.cell_value(n_0, mgeom.rho(r, r0, mr0), self.rreff,
-        #                       r1, q_n, q_nd)
-        # nd = np.where(self.fill_factor > 0, nd, np.NaN)
-        # nd = np.where(nd == 0, np.NaN, nd)
-        #
-        # # For asymmetric mass loss
-        # nd = np.where(self.rr < 0, nd * self._ss_jml_rb_frac, nd)
-        #
-        # self._nd = np.nan_to_num(nd, nan=np.NaN, posinf=np.NaN, neginf=np.NaN)
 
         ncpu = mp.cpu_count()
         chunk_size = list(self.xx.shape)
@@ -999,33 +994,6 @@ class JetModel:
                                          neginf=np.NaN)
 
         return self.temperature
-
-        # z = np.abs(self.rr)
-        # a = z - 0.5 * self.csize
-        # b = z + 0.5 * self.csize
-        #
-        # a = np.where(b <= self.params['geometry']['r_0'], np.NaN, a)
-        # b = np.where(b <= self.params['geometry']['r_0'], np.NaN, b)
-        #
-        # a = np.where(a <= self.params['geometry']['r_0'],
-        #              self.params['geometry']['r_0'], a)
-        #
-        # def indefinite_integral(z):
-        #     num_p1 = self.params['properties']['T_0'] * \
-        #              self.params["geometry"]["mod_r_0"]
-        #     num_p2 = ((z + self.params["geometry"]["mod_r_0"] -
-        #                self.params["geometry"]["r_0"]) /
-        #               (self.params["geometry"]["mod_r_0"]))
-        #     num_p2 = num_p2 ** (self.params["power_laws"]["q_T"] + 1.)
-        #     den = self.params["power_laws"]["q_T"] + 1.
-        #     return num_p1 * num_p2 / den
-        #
-        # ts = indefinite_integral(b) - indefinite_integral(a)
-        # ts /= b - a
-        # ts = np.where(self.fill_factor > 0., ts, np.NaN)
-        # self.temperature = ts
-        #
-        # return self.temperature
 
     @temperature.setter
     def temperature(self, new_ts: np.ndarray):
@@ -2577,6 +2545,13 @@ class Pipeline:
                                                      f"{run.fits_flux}",
                                                timestamp=True)
                             fluxes = fits.open(run.fits_flux)[0].data
+
+                        rt_plot = os.sep.join([run.rt_dcy, 'RT_plot.pdf'])
+                        self.log.add_entry(mtype="INFO",
+                                           entry="Plotting radiative transfer "
+                                                 f"results to {rt_plot}")
+                        pfunc.rt_plot(run, savefig=rt_plot)
+
                     else:
                         if not os.path.exists(run.fits_tau) or clobber:
                             self.log.add_entry(mtype="INFO",
@@ -3026,320 +3001,177 @@ class Pipeline:
 
         return None  # self.runs[idx]['products']
 
-    # # TODO: Move this to RaJePy.plotting.functions
-    # def plot_continuum_fluxes(self, plot_time: float,
-    #                           plot_reynolds: bool = True,
-    #                           savefig: bool = False) -> None:
+
+    # TODO: Move this to RaJePy.plotting.functions
+    # def radio_plot(self, run: Union[ContinuumRun, RRLRun],
+    #                percentile: float = 5., savefig: Union[bool, str] = False):
+    #     """
+    #     Generate 3 subplots of (from left to right) flux, optical depth and
+    #     emission measure.
+    #
+    #     Parameters
+    #     ----------
+    #     run : ContinuumRun
+    #         One of the ModelRun instance's runs
+    #
+    #     percentile : float,
+    #         Percentile of pixels to exclude from colorscale. Implemented as
+    #         some edge pixels have extremely low values. Supplied value must be
+    #         between 0 and 100.
+    #
+    #     savefig: bool, str
+    #         Whether to save the radio plot to file. If False, will not, but if
+    #         a str representing a valid path will save to that path.
+    #
+    #     Returns
+    #     -------
+    #     None.
+    #     """
     #     import matplotlib.pylab as plt
-    #     freqs, fluxes = [], []
-    #     freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
-    #     for idx, run in enumerate(self.runs):
-    #         if run.year == plot_time:
-    #             if run.completed and run.obs_type == 'continuum':
-    #                 # Skymodel fluxes
-    #                 flux = run.results['flux']
-    #                 fluxes.append(flux)
-    #                 freqs.append(run.freq)
-    #
-    #                 # imfit fluxes
-    #                 if run.results['imfit'] is not None:
-    #                     flux_imfit = run.results['imfit']['I']['val']
-    #                     eflux_imfit = run.results['imfit']['Ierr']['val']
-    #                     fluxes_imfit.append(flux_imfit)
-    #                     efluxes_imfit.append(eflux_imfit)
-    #                     freqs_imfit.append(run.freq)
-    #
-    #     freqs = np.array(freqs)
-    #     fluxes = np.array(fluxes)
-    #
-    #     xlims = (10 ** (np.log10(np.min(freqs)) - 0.5),
-    #              10 ** (np.log10(np.max(freqs)) + 0.5))
-    #
-    #     alphas = []
-    #     for n in np.arange(1, len(fluxes)):
-    #         alphas.append(np.log10(fluxes[n] /
-    #                                fluxes[n - 1]) /
-    #                       np.log10(freqs[n] / freqs[n - 1]))
-    #
-    #     alphas_imfit, ealphas_imfit = [], []
-    #     for n in np.arange(1, len(fluxes_imfit)):
-    #         alphas_imfit.append(np.log10(fluxes_imfit[n] /
-    #                                      fluxes_imfit[n - 1]) /
-    #                             np.log10(freqs_imfit[n] / freqs_imfit[n - 1]))
-    #         c = np.log(freqs_imfit[n] / freqs_imfit[n - 1])
-    #         ealpha = np.sqrt((efluxes_imfit[n] / (fluxes_imfit[n] * c)) ** 2. +
-    #                          (efluxes_imfit[n - 1] / (
-    #                                  fluxes_imfit[n - 1] * c)) ** 2.)
-    #         ealphas_imfit.append(ealpha)
-    #
-    #     l_z = self.model.nz * self.model.csize / \
-    #           self.model.params['target']['dist']
+    #     import matplotlib.gridspec as gridspec
     #
     #     plt.close('all')
     #
-    #     fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
-    #     ax2 = ax1.twinx()
+    #     fig = plt.figure(figsize=(cfg.plots['dims']['text'],
+    #                               cfg.plots['dims']['column']))
     #
-    #     # Alphas are calculated at the middle of two neighbouring frequencies
-    #     # in logarithmic space, hence the need for caclulation of freqs_a,
-    #     # the logarithmic mean of the two frequencies
-    #     freqs_a = [10. ** np.mean(np.log10([f, freqs[i + 1]])) for i, f in
-    #                enumerate(freqs[:-1])]
-    #     freqs_a_imfit = [10. ** np.mean(np.log10([f, freqs_imfit[i + 1]])) for
-    #                      i, f in
-    #                      enumerate(freqs_imfit[:-1])]
+    #     # Set common labels
+    #     fig.text(0.5, 0.0, r'$\Delta\alpha\,\left[^{\prime\prime}\right]$',
+    #              ha='center', va='bottom')
+    #     fig.text(0.05, 0.5, r'$\Delta\delta\,\left[^{\prime\prime}\right]$',
+    #              ha='left', va='center', rotation='vertical')
     #
-    #     ax2.plot(freqs_a, alphas, color='b', ls='None', mec='b', marker='o',
-    #              mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
+    #     outer_grid = gridspec.GridSpec(1, 3, wspace=0.4)
     #
-    #     ax2.errorbar(freqs_a, alphas_imfit, yerr=ealphas_imfit, ecolor='b',
-    #                  ls='None', capsize=2)
+    #     # Flux
+    #     l_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 0],
+    #                                               width_ratios=[5.667, 1],
+    #                                               wspace=0.0, hspace=0.0)
+    #     l_ax = plt.subplot(l_cell[0, 0])
+    #     l_cax = plt.subplot(l_cell[0, 1])
     #
-    #     freqs_r86 = np.logspace(np.log10(np.min(xlims)),
-    #                             np.log10(np.max(xlims)), 100)
-    #     flux_exp = []
-    #     for freq in freqs_r86:
-    #         f = mphys.flux_expected_r86(self.model, freq, l_z * 0.5)
-    #         flux_exp.append(f * 2.)  # for biconical jet
+    #     # Optical depth
+    #     m_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 1],
+    #                                               width_ratios=[5.667, 1],
+    #                                               wspace=0.0, hspace=0.0)
+    #     m_ax = plt.subplot(m_cell[0, 0])
+    #     m_cax = plt.subplot(m_cell[0, 1])
     #
-    #     alphas_r86 = []
-    #     for n in np.arange(1, len(freqs_r86)):
-    #         alphas_r86.append(np.log10(flux_exp[n] / flux_exp[n - 1]) /
-    #                           np.log10(freqs_r86[n] / freqs_r86[n - 1]))
+    #     # Emission measure
+    #     r_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 2],
+    #                                               width_ratios=[5.667, 1],
+    #                                               wspace=0.0, hspace=0.0)
+    #     r_ax = plt.subplot(r_cell[0, 0])
+    #     r_cax = plt.subplot(r_cell[0, 1])
     #
-    #     # Alphas are calculated at the middle of two neighbouring frequencies
-    #     # in logarithmic space, hence the need for caclulation of freqs_a_r86
-    #     freqs_a_r86 = [10 ** np.mean(np.log10([f, freqs_r86[i + 1]])) for i, f
-    #                    in
-    #                    enumerate(freqs_r86[:-1])]
-    #     if plot_reynolds:
-    #         ax2.plot(freqs_a_r86, alphas_r86, color='cornflowerblue', ls='--',
-    #                  lw=2, zorder=1)
+    #     bbox = l_ax.get_window_extent()
+    #     bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
+    #     aspect = bbox.width / bbox.height
     #
-    #     ax1.loglog(freqs, fluxes, mec='maroon', ls='None', mfc='r', lw=2,
-    #                zorder=3, marker='o', markersize=5)
-    #     ax1.errorbar(freqs_imfit, fluxes_imfit, yerr=efluxes_imfit, ecolor='r',
-    #                  ls='None', capsize=2)
+    #     flux = fits.open(run.fits_flux)[0].data[0]
+    #     taus = fits.open(run.fits_tau)[0].data[0]
+    #     ems = fits.open(run.fits_em)[0].data[0]
     #
-    #     if plot_reynolds:
-    #         ax1.loglog(freqs_r86, flux_exp, color='r', ls='-', lw=2,
-    #                    zorder=1)
-    #         ax1.loglog(freqs_r86,
-    #                    mphys.approx_flux_expected_r86(self.model, freqs_r86) *
-    #                    2., color='gray', ls='-.', lw=2, zorder=1)
-    #     ax1.set_xlim(xlims)
-    #     ax2.set_ylim(-0.2, 2.1)
-    #     pfunc.equalise_axes(ax1, fix_x=False)
+    #     flux = np.where(flux > 0, flux, np.NaN)
+    #     taus = np.where(taus > 0, taus, np.NaN)
+    #     ems = np.where(ems > 0, ems, np.NaN)
     #
-    #     ax1.set_xlabel(r'$\nu \, \left[ {\rm Hz} \right]$', color='k')
-    #     ax1.set_ylabel(r'$S_\nu \, \left[ {\rm Jy} \right]$', color='k')
-    #     ax2.set_ylabel(r'$\alpha$', color='b')
+    #     # Deal with cube images by averaging along the spectral (1st) axis
+    #     if len(np.shape(flux)) == 3:
+    #         flux = np.nanmean(flux, axis=0)
+    #     if len(np.shape(taus)) == 3:
+    #         taus = np.nanmean(taus, axis=0)
     #
-    #     ax1.tick_params(which='both', direction='in', top=True)
-    #     ax2.tick_params(which='both', direction='in', color='b')
-    #     ax2.tick_params(axis='y', which='both', colors='b')
-    #     ax2.spines['right'].set_color('b')
-    #     ax2.yaxis.label.set_color('b')
-    #     ax2.minorticks_on()
+    #     csize_as = np.tan(self.model.csize * con.au / con.parsec /
+    #                       self.model.params['target']['dist'])  # radians
+    #     csize_as /= con.arcsec  # arcseconds
+    #     x_extent = np.shape(flux)[1] * csize_as
+    #     z_extent = np.shape(flux)[0] * csize_as
     #
-    #     save_file = '_'.join(
-    #         ["Jet", "lz" + str(self.model.params["grid"]["l_z"]),
-    #          "csize" + str(self.model.params["grid"]["c_size"])])
-    #     save_file += '.png'
-    #     save_file = os.sep.join([self.dcy,
-    #                              'Day{}'.format(int(plot_time * 365.)),
-    #                              save_file])
+    #     flux_min = np.nanpercentile(flux, percentile)
+    #     if np.log10(flux_min) > (np.log10(np.nanmax(flux)) - 1.):
+    #         flux_min = 10 ** (np.floor(np.log10(np.nanmax(flux)) - 1.))
     #
-    #     title = "Radio SED plot at t={:.0f}yr for jet model '{}'"
-    #     title = title.format(plot_time, self.model.params['target']['name'])
+    #     im_flux = l_ax.imshow(flux,
+    #                           norm=LogNorm(vmin=flux_min,
+    #                                        vmax=np.nanmax(flux)),
+    #                           extent=(-x_extent / 2., x_extent / 2.,
+    #                                   -z_extent / 2., z_extent / 2.),
+    #                           cmap='gnuplot2_r', aspect="equal")
     #
-    #     png_metadata = cfg.plots['metadata']['png']
-    #     png_metadata["Title"] = title
+    #     l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
+    #     pfunc.make_colorbar(l_cax, np.nanmax(flux), cmin=flux_min,
+    #                         position='right', orientation='vertical',
+    #                         numlevels=50, colmap='gnuplot2_r',
+    #                         norm=im_flux.norm)
     #
-    #     pdf_metadata = cfg.plots['metadata']['pdf']
-    #     pdf_metadata["Title"] = title
+    #     tau_min = np.nanpercentile(taus, percentile)
+    #     im_tau = m_ax.imshow(taus,
+    #                          norm=LogNorm(vmin=tau_min,
+    #                                       vmax=np.nanmax(taus)),
+    #                          extent=(-x_extent / 2., x_extent / 2.,
+    #                                  -z_extent / 2., z_extent / 2.),
+    #                          cmap='Blues', aspect="equal")
+    #     m_ax.set_xlim(np.array(m_ax.get_ylim()) * aspect)
+    #     pfunc.make_colorbar(m_cax, np.nanmax(taus), cmin=tau_min,
+    #                         position='right', orientation='vertical',
+    #                         numlevels=50, colmap='Blues',
+    #                         norm=im_tau.norm)
+    #
+    #     em_min = np.nanpercentile(ems, percentile)
+    #     im_em = r_ax.imshow(ems,
+    #                         norm=LogNorm(vmin=em_min,
+    #                                      vmax=np.nanmax(ems)),
+    #                         extent=(-x_extent / 2., x_extent / 2.,
+    #                                 -z_extent / 2., z_extent / 2.),
+    #                         cmap='cividis', aspect="equal")
+    #     r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
+    #     pfunc.make_colorbar(r_cax, np.nanmax(ems), cmin=em_min,
+    #                         position='right', orientation='vertical',
+    #                         numlevels=50, colmap='cividis',
+    #                         norm=im_em.norm)
+    #
+    #     axes = [l_ax, m_ax, r_ax]
+    #     caxes = [l_cax, m_cax, r_cax]
+    #
+    #     l_ax.text(0.9, 0.9, r'a', ha='center', va='center',
+    #               transform=l_ax.transAxes)
+    #     m_ax.text(0.9, 0.9, r'b', ha='center', va='center',
+    #               transform=m_ax.transAxes)
+    #     r_ax.text(0.9, 0.9, r'c', ha='center', va='center',
+    #               transform=r_ax.transAxes)
+    #
+    #     m_ax.axes.yaxis.set_ticklabels([])
+    #     r_ax.axes.yaxis.set_ticklabels([])
+    #
+    #     for ax in axes:
+    #         ax.contour(np.linspace(-x_extent / 2., x_extent / 2.,
+    #                                np.shape(flux)[1]),
+    #                    np.linspace(-z_extent / 2., z_extent / 2.,
+    #                                np.shape(flux)[0]),
+    #                    taus, [1.], colors='w')
+    #         xlims = ax.get_xlim()
+    #         ax.set_xticks(ax.get_yticks())
+    #         ax.set_xlim(xlims)
+    #         ax.tick_params(which='both', direction='in', top=True,
+    #                        right=True)
+    #         ax.minorticks_on()
+    #
+    #     l_cax.text(0.5, 0.5, r'$\left[{\rm mJy \, pixel^{-1}}\right]$',
+    #                ha='center', va='center', transform=l_cax.transAxes,
+    #                color='white', rotation=90.)
+    #     r_cax.text(0.5, 0.5, r'$\left[ {\rm pc \, cm^{-6}} \right]$',
+    #                ha='center', va='center', transform=r_cax.transAxes,
+    #                color='white', rotation=90.)
+    #
+    #     for cax in caxes:
+    #         cax.yaxis.set_label_position("right")
+    #         cax.minorticks_on()
     #
     #     if savefig:
-    #         self.log.add_entry("INFO",
-    #                            "Saving radio SED figure to {} for time {}yr"
-    #                            "".format(save_file.replace('png', '(png,pdf)'),
-    #                                      plot_time))
-    #         fig.savefig(save_file, bbox_inches='tight', metadata=png_metadata,
-    #                     dpi=300)
-    #         fig.savefig(save_file.replace('png', 'pdf'), bbox_inches='tight',
-    #                     metadata=pdf_metadata, dpi=300)
+    #         plt.savefig(savefig, bbox_inches='tight', dpi=300)
+    #
     #     return None
-
-    # TODO: Move this to RaJePy.plotting.functions
-    def radio_plot(self, run: Union[ContinuumRun, RRLRun],
-                   percentile: float = 5., savefig: Union[bool, str] = False):
-        """
-        Generate 3 subplots of (from left to right) flux, optical depth and
-        emission measure.
-        
-        Parameters
-        ----------
-        run : ContinuumRun
-            One of the ModelRun instance's runs
-            
-        percentile : float,
-            Percentile of pixels to exclude from colorscale. Implemented as
-            some edge pixels have extremely low values. Supplied value must be
-            between 0 and 100.
-
-        savefig: bool, str
-            Whether to save the radio plot to file. If False, will not, but if
-            a str representing a valid path will save to that path.
-    
-        Returns
-        -------
-        None.
-        """
-        import matplotlib.pylab as plt
-        import matplotlib.gridspec as gridspec
-
-        plt.close('all')
-
-        fig = plt.figure(figsize=(cfg.plots['dims']['text'],
-                                  cfg.plots['dims']['column']))
-
-        # Set common labels
-        fig.text(0.5, 0.0, r'$\Delta\alpha\,\left[^{\prime\prime}\right]$',
-                 ha='center', va='bottom')
-        fig.text(0.05, 0.5, r'$\Delta\delta\,\left[^{\prime\prime}\right]$',
-                 ha='left', va='center', rotation='vertical')
-
-        outer_grid = gridspec.GridSpec(1, 3, wspace=0.4)
-
-        # Flux
-        l_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 0],
-                                                  width_ratios=[5.667, 1],
-                                                  wspace=0.0, hspace=0.0)
-        l_ax = plt.subplot(l_cell[0, 0])
-        l_cax = plt.subplot(l_cell[0, 1])
-
-        # Optical depth
-        m_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 1],
-                                                  width_ratios=[5.667, 1],
-                                                  wspace=0.0, hspace=0.0)
-        m_ax = plt.subplot(m_cell[0, 0])
-        m_cax = plt.subplot(m_cell[0, 1])
-
-        # Emission measure
-        r_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 2],
-                                                  width_ratios=[5.667, 1],
-                                                  wspace=0.0, hspace=0.0)
-        r_ax = plt.subplot(r_cell[0, 0])
-        r_cax = plt.subplot(r_cell[0, 1])
-
-        bbox = l_ax.get_window_extent()
-        bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
-        aspect = bbox.width / bbox.height
-
-        flux = fits.open(run.fits_flux)[0].data[0]
-        taus = fits.open(run.fits_tau)[0].data[0]
-        ems = fits.open(run.fits_em)[0].data[0]
-
-        flux = np.where(flux > 0, flux, np.NaN)
-        taus = np.where(taus > 0, taus, np.NaN)
-        ems = np.where(ems > 0, ems, np.NaN)
-
-        # Deal with cube images by averaging along the spectral (1st) axis
-        if len(np.shape(flux)) == 3:
-            flux = np.nanmean(flux, axis=0)
-        if len(np.shape(taus)) == 3:
-            taus = np.nanmean(taus, axis=0)
-
-        csize_as = np.tan(self.model.csize * con.au / con.parsec /
-                          self.model.params['target']['dist'])  # radians
-        csize_as /= con.arcsec  # arcseconds
-        x_extent = np.shape(flux)[1] * csize_as
-        z_extent = np.shape(flux)[0] * csize_as
-
-        flux_min = np.nanpercentile(flux, percentile)
-        if np.log10(flux_min) > (np.log10(np.nanmax(flux)) - 1.):
-            flux_min = 10 ** (np.floor(np.log10(np.nanmax(flux)) - 1.))
-
-        im_flux = l_ax.imshow(flux,
-                              norm=LogNorm(vmin=flux_min,
-                                           vmax=np.nanmax(flux)),
-                              extent=(-x_extent / 2., x_extent / 2.,
-                                      -z_extent / 2., z_extent / 2.),
-                              cmap='gnuplot2_r', aspect="equal")
-
-        l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
-        pfunc.make_colorbar(l_cax, np.nanmax(flux), cmin=flux_min,
-                            position='right', orientation='vertical',
-                            numlevels=50, colmap='gnuplot2_r',
-                            norm=im_flux.norm)
-
-        tau_min = np.nanpercentile(taus, percentile)
-        im_tau = m_ax.imshow(taus,
-                             norm=LogNorm(vmin=tau_min,
-                                          vmax=np.nanmax(taus)),
-                             extent=(-x_extent / 2., x_extent / 2.,
-                                     -z_extent / 2., z_extent / 2.),
-                             cmap='Blues', aspect="equal")
-        m_ax.set_xlim(np.array(m_ax.get_ylim()) * aspect)
-        pfunc.make_colorbar(m_cax, np.nanmax(taus), cmin=tau_min,
-                            position='right', orientation='vertical',
-                            numlevels=50, colmap='Blues',
-                            norm=im_tau.norm)
-
-        em_min = np.nanpercentile(ems, percentile)
-        im_em = r_ax.imshow(ems,
-                            norm=LogNorm(vmin=em_min,
-                                         vmax=np.nanmax(ems)),
-                            extent=(-x_extent / 2., x_extent / 2.,
-                                    -z_extent / 2., z_extent / 2.),
-                            cmap='cividis', aspect="equal")
-        r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
-        pfunc.make_colorbar(r_cax, np.nanmax(ems), cmin=em_min,
-                            position='right', orientation='vertical',
-                            numlevels=50, colmap='cividis',
-                            norm=im_em.norm)
-
-        axes = [l_ax, m_ax, r_ax]
-        caxes = [l_cax, m_cax, r_cax]
-
-        l_ax.text(0.9, 0.9, r'a', ha='center', va='center',
-                  transform=l_ax.transAxes)
-        m_ax.text(0.9, 0.9, r'b', ha='center', va='center',
-                  transform=m_ax.transAxes)
-        r_ax.text(0.9, 0.9, r'c', ha='center', va='center',
-                  transform=r_ax.transAxes)
-
-        m_ax.axes.yaxis.set_ticklabels([])
-        r_ax.axes.yaxis.set_ticklabels([])
-
-        for ax in axes:
-            ax.contour(np.linspace(-x_extent / 2., x_extent / 2.,
-                                   np.shape(flux)[1]),
-                       np.linspace(-z_extent / 2., z_extent / 2.,
-                                   np.shape(flux)[0]),
-                       taus, [1.], colors='w')
-            xlims = ax.get_xlim()
-            ax.set_xticks(ax.get_yticks())
-            ax.set_xlim(xlims)
-            ax.tick_params(which='both', direction='in', top=True,
-                           right=True)
-            ax.minorticks_on()
-
-        l_cax.text(0.5, 0.5, r'$\left[{\rm mJy \, pixel^{-1}}\right]$',
-                   ha='center', va='center', transform=l_cax.transAxes,
-                   color='white', rotation=90.)
-        r_cax.text(0.5, 0.5, r'$\left[ {\rm pc \, cm^{-6}} \right]$',
-                   ha='center', va='center', transform=r_cax.transAxes,
-                   color='white', rotation=90.)
-
-        for cax in caxes:
-            cax.yaxis.set_label_position("right")
-            cax.minorticks_on()
-
-        if savefig:
-            plt.savefig(savefig, bbox_inches='tight', dpi=300)
-
-        return None
 
 
 class Pointing(object):
@@ -3392,103 +3224,3 @@ class Pointing(object):
     def coord(self):
         return self._coord
 
-
-if __name__ == '__main__':
-    # import matplotlib.cm
-    import matplotlib.pylab as plt
-
-    param_dcy = os.sep.join([os.path.dirname(__file__), 'files'])
-    jm = JetModel(os.sep.join([param_dcy, 'example-model-params.py']))
-    pl = Pipeline(jm, os.sep.join([param_dcy, 'example-pipeline-params.py']))
-    cwdcy = os.path.expanduser('~')
-
-    pfunc.geometry_plot(jm, True)
-
-    plt.close('all')
-
-    data = np.sqrt(np.nanmean(np.abs(jm.rr) * jm.fill_factor,
-                              axis=jm.los_axis).T[::-1])
-    data *= np.sign(np.nanmean(jm.rr * jm.fill_factor,
-                               axis=jm.los_axis).T[::-1])
-
-    data = np.nanmean(jm.rr * jm.fill_factor, axis=jm.los_axis).T[::-1]
-
-    plt.imshow(data,
-               extent=(np.min(jm.xx), np.max(jm.xx) + jm.csize * 1.,
-                       np.min(jm.zz), np.max(jm.zz) + jm.csize * 1.),
-               cmap='coolwarm_r')
-
-    # plt.imshow(np.nanmean(jm.rr * jm.fill_factor, axis=0).T,
-    #            extent=(np.min(jm.yy), np.max(jm.yy) + jm.csize * 1.,
-    #                    np.min(jm.zz), np.max(jm.zz) + jm.csize * 1.))
-
-    plt.show()
-
-    # pl.execute(simobserve=False, resume=False)
-    # plotf.plot_geometry(jm, savefig=os.sep.join([cwdcy, 'Desktop',
-    #                                              'geometry_plot.pdf']),
-    #                     show_plot=False)
-    # plotf.model_plot(jm, savefig=os.sep.join([cwdcy, 'Desktop',
-    #                                           'model_plot.pdf']),
-    #                  show_plot=False)
-    # ns = miscf.reorder_axes(jm.number_density, 0, 2, 1, None, 'y', None)
-    # hdu3d = fits.PrimaryHDU(ns)
-    # hdul3d = fits.HDUList([hdu3d])
-    # fitsfile3d = os.sep.join([cwdcy, 'ns3d.fits'])
-    # if os.path.exists(fitsfile3d):
-    #     os.remove(fitsfile3d)
-    # hdul3d.writeto(fitsfile3d)
-    # # from RaJePy.plotting import functions as plotf
-    # # plotf.model_plot(jm, show_plot=True)
-    #
-    # ns = jm.fill_factor
-    # sum_ns_y = np.nansum(ns, axis=1)
-    #
-    # if jm._arr_indexing == 'ij':
-    #     # hdu = fits.PrimaryHDU(np.flip(np.swapaxes(ns, 2, 0), axis=1))
-    #     # Swap x-axis for z-axis and then z-axis for y-axis since
-    #     # NAXIS1 = numpy axis 2, NAXIS2 = numpy axis 1 and NAXIS3 = numpy axis 0
-    #     hdu3d = fits.PrimaryHDU(np.swapaxes(np.swapaxes(ns, 0, 2), 0, 1))
-    #     hdu2d = fits.PrimaryHDU(np.swapaxes(sum_ns_y, 0, 1))
-    #     hdu3drs = fits.PrimaryHDU(np.swapaxes(np.swapaxes(jm.rr, 0, 2), 0, 1))
-    #     hdu2drs = fits.PrimaryHDU(np.swapaxes(np.nansum(jm.rr, axis=1), 0, 1))
-    #     hdu3dphis = fits.PrimaryHDU(np.degrees(np.swapaxes(np.swapaxes(np.where(np.isnan(jm.fill_factor), np.nan, jm.pp), 0, 2), 0, 1)))
-    #
-    # elif jm._arr_indexing == 'xy':
-    #     # hdu = fits.PrimaryHDU(np.nansum(ns, axis=0).T)
-    #     hdu3d = fits.PrimaryHDU(ns)
-    # else:
-    #     raise ValueError(f"Array indexing should be 'ij' or 'xy', not "
-    #                      f"{jm._arr_indexing.__repr__()}")
-    # hdul3d = fits.HDUList([hdu3d])
-    # fitsfile3d = r'C:/Users/simon/Desktop/ns3d.fits'
-    # if os.path.exists(fitsfile3d):
-    #     os.remove(fitsfile3d)
-    # hdul3d.writeto(fitsfile3d)
-    #
-    # hdul2d = fits.HDUList([hdu2d])
-    # fitsfile2d = r'C:/Users/simon/Desktop/ns2d.fits'
-    # if os.path.exists(fitsfile2d):
-    #     os.remove(fitsfile2d)
-    # hdul2d.writeto(fitsfile2d)
-    #
-    # hdul2drs = fits.HDUList([hdu2drs])
-    # fitsfile2drs = r'C:/Users/simon/Desktop/rs2d.fits'
-    # if os.path.exists(fitsfile2drs):
-    #     os.remove(fitsfile2drs)
-    # hdul2drs.writeto(fitsfile2drs)
-    #
-    # hdul3drs = fits.HDUList([hdu3drs])
-    # fitsfile3drs = r'C:/Users/simon/Desktop/rs3d.fits'
-    # if os.path.exists(fitsfile3drs):
-    #     os.remove(fitsfile3drs)
-    # hdul3drs.writeto(fitsfile3drs)
-    #
-    # hdul3dphis = fits.HDUList([hdu3dphis])
-    # fitsfile3dphis = r'C:/Users/simon/Desktop/phis3d.fits'
-    # if os.path.exists(fitsfile3dphis):
-    #     os.remove(fitsfile3dphis)
-    # hdul3dphis.writeto(fitsfile3dphis)
-    #
-    #
-    # print(f"nx, ny, nz = {jm.nx}, {jm.ny}, {jm.nz}")

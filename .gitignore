@@ -1,9 +1,10 @@
-*/__pycache__
-*.pyc
+**/__pycache__/
 .DS_Store
 /.idea
 /.idea/*
 /test_output_dcy
 /test_output_dcy/*
 venv
-*.pyc
+**/*.pyc
+**/*.ipynb
+environment.yaml

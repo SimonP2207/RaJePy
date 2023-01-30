@@ -228,21 +228,26 @@ class Entry(metaclass=EntryMetaClass):
 
     @property
     def rtime(self):
+        """Time of entry recording"""
         return self._rtime
 
     @property
     def message(self):
+        """Message text"""
         return self._message
 
     @property
     def mtype(self):
+        """Type of entry"""
         return self._mtype
 
     @property
     def mtime(self):
+        """Time to be displayed on Entry message"""
         return self._mtime
 
     def time_str(self, fmt='%d%B%Y-%H:%M:%S'):
+        """Formatted Entry message"""
         return time.strftime(fmt, self.mtime).upper()
 
 

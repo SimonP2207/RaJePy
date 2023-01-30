@@ -9,6 +9,7 @@ from matplotlib.colors import LogNorm, SymLogNorm, Normalize
 from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 import astropy.units as u
+from astropy.io import fits
 
 
 def equalise_axes(ax, fix_x=False, fix_y=False, fix_z=False):
@@ -693,7 +694,175 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
     return None
 
 
-def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
+# def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
+#             show_plot: bool = False, savefig: Union[bool, str] = False):
+#     """
+#     Generate the 3 subplots of radiative transfer solutions (from left to right)
+#     flux, optical depth and emission measure.
+#
+#     Parameters
+#     ----------
+#     jm
+#         JetModel instance from which to plot mass/volume slices.
+#     freq
+#         Frequency to produce images at.
+#     percentile
+#         Percentile of pixels to exclude from colorscale. Implemented as
+#         some edge pixels have extremely low values. Supplied value must be
+#         between 0 and 100.
+#     savefig: bool, str
+#         Whether to save the radio plot to file. If False, will not, but if
+#         a str representing a valid path will save to that path.
+#     show_plot
+#         Whether to show the plot on the display device. Useful for interactive
+#         console sessions, False by default
+#     savefig
+#         Whether to save the figure, False by default. Provide the full path of
+#         the save file as a str to save.
+#
+#     Returns
+#     -------
+#     None
+#     """
+#
+#     plt.close('all')
+#
+#     fig = plt.figure(figsize=(6.65, 6.65 / 2))
+#
+#     # Set common labels
+#     fig.text(0.5, 0.0, r'$\Delta\alpha\,\left[^{\prime\prime}\right]$',
+#              ha='center', va='bottom')
+#     fig.text(0.05, 0.5, r'$\Delta\delta\,\left[^{\prime\prime}\right]$',
+#              ha='left', va='center', rotation='vertical')
+#
+#     outer_grid = gridspec.GridSpec(1, 3, wspace=0.4)
+#
+#     # Flux
+#     l_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 0],
+#                                               width_ratios=[5.667, 1],
+#                                               wspace=0.0, hspace=0.0)
+#     l_ax = plt.subplot(l_cell[0, 0])
+#     l_cax = plt.subplot(l_cell[0, 1])
+#
+#     # Optical depth
+#     m_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 1],
+#                                               width_ratios=[5.667, 1],
+#                                               wspace=0.0, hspace=0.0)
+#     m_ax = plt.subplot(m_cell[0, 0])
+#     m_cax = plt.subplot(m_cell[0, 1])
+#
+#     # Emission measure
+#     r_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 2],
+#                                               width_ratios=[5.667, 1],
+#                                               wspace=0.0, hspace=0.0)
+#     r_ax = plt.subplot(r_cell[0, 0])
+#     r_cax = plt.subplot(r_cell[0, 1])
+#
+#     bbox = l_ax.get_window_extent()
+#     bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
+#     aspect = bbox.width / bbox.height
+#
+#     flux = jm.flux_ff(freq) * 1e3
+#     taus = jm.optical_depth_ff(freq)
+#     taus = np.where(taus > 0, taus, np.NaN)
+#     ems = jm.emission_measure()
+#     ems = np.where(ems > 0., ems, np.NaN)
+#
+#     csize_as = np.tan(jm.csize * con.au / con.parsec /
+#                       jm.params['target']['dist'])  # radians
+#     csize_as /= con.arcsec  # arcseconds
+#     x_extent = np.shape(flux)[0] * csize_as
+#     z_extent = np.shape(flux)[1] * csize_as
+#
+#     flux_min = np.nanpercentile(flux, percentile)
+#     im_flux = l_ax.imshow(flux.T,
+#                           norm=LogNorm(vmin=flux_min,
+#                                        vmax=np.nanmax(flux)),
+#                           extent=(-x_extent / 2., x_extent / 2.,
+#                                   -z_extent / 2., z_extent / 2.),
+#                           cmap='gnuplot2_r', aspect="equal")
+#
+#     l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
+#     make_colorbar(l_cax, np.nanmax(flux), cmin=flux_min,
+#                   position='right', orientation='vertical',
+#                   numlevels=50, colmap='gnuplot2_r',
+#                   norm=im_flux.norm)
+#
+#     tau_min = np.nanpercentile(taus, percentile)
+#     im_tau = m_ax.imshow(taus.T,
+#                          norm=LogNorm(vmin=tau_min,
+#                                       vmax=np.nanmax(taus)),
+#                          extent=(-x_extent / 2., x_extent / 2.,
+#                                  -z_extent / 2., z_extent / 2.),
+#                          cmap='Blues', aspect="equal")
+#     m_ax.set_xlim(np.array(m_ax.get_ylim()) * aspect)
+#     make_colorbar(m_cax, np.nanmax(taus), cmin=tau_min,
+#                   position='right', orientation='vertical',
+#                   numlevels=50, colmap='Blues',
+#                   norm=im_tau.norm)
+#
+#     em_min = np.nanpercentile(ems, percentile)
+#     im_EM = r_ax.imshow(ems.T,
+#                         norm=LogNorm(vmin=em_min,
+#                                      vmax=np.nanmax(ems)),
+#                         extent=(-x_extent / 2., x_extent / 2.,
+#                                 -z_extent / 2., z_extent / 2.),
+#                         cmap='cividis', aspect="equal")
+#     r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
+#     make_colorbar(r_cax, np.nanmax(ems), cmin=em_min,
+#                   position='right', orientation='vertical',
+#                   numlevels=50, colmap='cividis',
+#                   norm=im_EM.norm)
+#
+#     axes = [l_ax, m_ax, r_ax]
+#     caxes = [l_cax, m_cax, r_cax]
+#
+#     l_ax.text(0.9, 0.9, r'a', ha='center', va='center',
+#               transform=l_ax.transAxes)
+#     m_ax.text(0.9, 0.9, r'b', ha='center', va='center',
+#               transform=m_ax.transAxes)
+#     r_ax.text(0.9, 0.9, r'c', ha='center', va='center',
+#               transform=r_ax.transAxes)
+#
+#     m_ax.axes.yaxis.set_ticklabels([])
+#     r_ax.axes.yaxis.set_ticklabels([])
+#
+#     for ax in axes:
+#         ax.contour(np.linspace(-x_extent / 2., x_extent / 2.,
+#                                np.shape(flux)[0]),
+#                    np.linspace(-z_extent / 2., z_extent / 2.,
+#                                np.shape(flux)[1]),
+#                    taus.T, [1.], colors='w')
+#         xlims = ax.get_xlim()
+#         ax.set_xticks(ax.get_yticks())
+#         ax.set_xlim(xlims)
+#         ax.tick_params(which='both', direction='in', top=True,
+#                        right=True)
+#         ax.minorticks_on()
+#
+#     l_cax.text(0.5, 0.5, r'$\left[{\rm mJy \, pixel^{-1}}\right]$',
+#                ha='center', va='center', transform=l_cax.transAxes,
+#                color='white', rotation=90.)
+#     r_cax.text(0.5, 0.5, r'$\left[ {\rm pc \, cm^{-6}} \right]$',
+#                ha='center', va='center', transform=r_cax.transAxes,
+#                color='white', rotation=90.)
+#
+#     for cax in caxes:
+#         cax.yaxis.set_label_position("right")
+#         cax.minorticks_on()
+#
+#     if savefig:
+#         # TODO: Put this in appropriate place in JetModel class
+#         # jm.log.add_entry("INFO",
+#         #                    "Radio plot saved to " + savefig)
+#         plt.savefig(savefig, bbox_inches='tight', dpi=300)
+#
+#     if show_plot:
+#         plt.show()
+#
+#     return None
+
+def rt_plot(run: 'ContinuumRun', percentile: float = 5.,
             show_plot: bool = False, savefig: Union[bool, str] = False):
     """
     Generate the 3 subplots of radiative transfer solutions (from left to right)
@@ -701,10 +870,8 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
 
     Parameters
     ----------
-    jm
-        JetModel instance from which to plot mass/volume slices.
-    freq
-        Frequency to produce images at.
+    run
+        ContinuumRun instance to plot from
     percentile
         Percentile of pixels to exclude from colorscale. Implemented as
         some edge pixels have extremely low values. Supplied value must be
@@ -761,34 +928,40 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
     bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
     aspect = bbox.width / bbox.height
 
-    flux = jm.flux_ff(freq) * 1e3
-    taus = jm.optical_depth_ff(freq)
-    taus = np.where(taus > 0, taus, np.NaN)
-    ems = jm.emission_measure()
+    hdr_flux, flux = load_fits_hdr_and_data(run.fits_flux)
+    hdr_taus, taus = load_fits_hdr_and_data(run.fits_tau)
+    hdr_ems, ems = load_fits_hdr_and_data(run.fits_em)
+
+    # TODO: This is where image cubes with more than one channel won't be
+    #  represented correctly
+    flux = flux[0] if len(flux.shape) == 3 else flux
+    taus = taus[0] if len(taus.shape) == 3 else taus
+    ems = ems[0] if len(ems.shape) == 3 else ems
+
+    flux = np.where(flux > 0., flux, np.NaN)
+    taus = np.where(taus > 0., taus, np.NaN)
     ems = np.where(ems > 0., ems, np.NaN)
 
-    csize_as = np.tan(jm.csize * con.au / con.parsec /
-                      jm.params['target']['dist'])  # radians
-    csize_as /= con.arcsec  # arcseconds
-    x_extent = np.shape(flux)[0] * csize_as
-    z_extent = np.shape(flux)[1] * csize_as
+    csize_as = np.abs(hdr_flux['CDELT1']) * 3600.
+    x_extent = np.shape(flux)[1] * csize_as
+    z_extent = np.shape(flux)[0] * csize_as
 
     flux_min = np.nanpercentile(flux, percentile)
-    im_flux = l_ax.imshow(flux.T,
+    im_flux = r_ax.imshow(flux,
                           norm=LogNorm(vmin=flux_min,
                                        vmax=np.nanmax(flux)),
                           extent=(-x_extent / 2., x_extent / 2.,
                                   -z_extent / 2., z_extent / 2.),
                           cmap='gnuplot2_r', aspect="equal")
 
-    l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
-    make_colorbar(l_cax, np.nanmax(flux), cmin=flux_min,
+    r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
+    make_colorbar(r_cax, np.nanmax(flux), cmin=flux_min,
                   position='right', orientation='vertical',
                   numlevels=50, colmap='gnuplot2_r',
                   norm=im_flux.norm)
 
     tau_min = np.nanpercentile(taus, percentile)
-    im_tau = m_ax.imshow(taus.T,
+    im_tau = m_ax.imshow(taus,
                          norm=LogNorm(vmin=tau_min,
                                       vmax=np.nanmax(taus)),
                          extent=(-x_extent / 2., x_extent / 2.,
@@ -801,14 +974,14 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
                   norm=im_tau.norm)
 
     em_min = np.nanpercentile(ems, percentile)
-    im_EM = r_ax.imshow(ems.T,
+    im_EM = l_ax.imshow(ems,
                         norm=LogNorm(vmin=em_min,
                                      vmax=np.nanmax(ems)),
                         extent=(-x_extent / 2., x_extent / 2.,
                                 -z_extent / 2., z_extent / 2.),
                         cmap='cividis', aspect="equal")
-    r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
-    make_colorbar(r_cax, np.nanmax(ems), cmin=em_min,
+    l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
+    make_colorbar(l_cax, np.nanmax(ems), cmin=em_min,
                   position='right', orientation='vertical',
                   numlevels=50, colmap='cividis',
                   norm=im_EM.norm)
@@ -816,11 +989,11 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
     axes = [l_ax, m_ax, r_ax]
     caxes = [l_cax, m_cax, r_cax]
 
-    l_ax.text(0.9, 0.9, r'a', ha='center', va='center',
+    l_ax.text(0.9, 0.95, r'a', ha='center', va='center',
               transform=l_ax.transAxes)
-    m_ax.text(0.9, 0.9, r'b', ha='center', va='center',
+    m_ax.text(0.9, 0.95, r'b', ha='center', va='center',
               transform=m_ax.transAxes)
-    r_ax.text(0.9, 0.9, r'c', ha='center', va='center',
+    r_ax.text(0.9, 0.95, r'c', ha='center', va='center',
               transform=r_ax.transAxes)
 
     m_ax.axes.yaxis.set_ticklabels([])
@@ -828,10 +1001,10 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
 
     for ax in axes:
         ax.contour(np.linspace(-x_extent / 2., x_extent / 2.,
-                               np.shape(flux)[0]),
-                   np.linspace(-z_extent / 2., z_extent / 2.,
                                np.shape(flux)[1]),
-                   taus.T, [1.], colors='w')
+                   np.linspace(-z_extent / 2., z_extent / 2.,
+                               np.shape(flux)[0]),
+                   taus, [1.], colors='w')
         xlims = ax.get_xlim()
         ax.set_xticks(ax.get_yticks())
         ax.set_xlim(xlims)
@@ -839,11 +1012,11 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
                        right=True)
         ax.minorticks_on()
 
-    l_cax.text(0.5, 0.5, r'$\left[{\rm mJy \, pixel^{-1}}\right]$',
-               ha='center', va='center', transform=l_cax.transAxes,
-               color='white', rotation=90.)
-    r_cax.text(0.5, 0.5, r'$\left[ {\rm pc \, cm^{-6}} \right]$',
+    r_cax.text(0.5, 0.5, r'$\left[{\rm Jy \, pixel^{-1}}\right]$',
                ha='center', va='center', transform=r_cax.transAxes,
+               color='white', rotation=90.)
+    l_cax.text(0.5, 0.5, r'$\left[ {\rm pc \, cm^{-6}} \right]$',
+               ha='center', va='center', transform=l_cax.transAxes,
                color='white', rotation=90.)
 
     for cax in caxes:
@@ -851,9 +1024,6 @@ def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
         cax.minorticks_on()
 
     if savefig:
-        # TODO: Put this in appropriate place in JetModel class
-        # jm.log.add_entry("INFO",
-        #                    "Radio plot saved to " + savefig)
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
     if show_plot:
@@ -1466,9 +1636,7 @@ def radio_plot(pline: 'Pipeline', years: Union[float, Tuple[float], None],
     plt.show()
 
 
-def load_fits_hdr_and_data(fits_file: str) -> Tuple[np.ndarray, np.ndarray]:
-    from astropy.io import fits
-
+def load_fits_hdr_and_data(fits_file: str) -> Tuple[fits.Header, np.ndarray]:
     hdulist = fits.open(fits_file)
 
     if len(hdulist) > 1:
