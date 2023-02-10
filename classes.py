@@ -109,9 +109,11 @@ class JetModel:
         lz_au = np.tan(lz * con.arcsec) * dist_au
         pa = params['geometry']['pa']
 
+        # Establish plane-of-the-sky grid dimensions in x/z
         x_au, _, z_au = mgeom.xyz_rotate(0., 0., lz_au, 0.,
                                          params['geometry']['pa'], 'xy')
 
+        # Estabish line-of-sight grid dimensions in y
         _, y_au, _ = mgeom.xyz_rotate(0., 0., lz_au,
                                       90 - params['geometry']['inc'], 0., 'xy')
         r_au = np.sqrt(np.sum(np.array([x_au, y_au, z_au]) ** 2.))
@@ -120,6 +122,7 @@ class JetModel:
         y_cells = (int(np.abs(y_au / 2) / csize_au) + 1) * 2
         z_cells = (int(np.abs(z_au / 2) / csize_au) + 1) * 2
 
+        # Calculate jet-width at maximum jet extent
         wr_au = mgeom.w_r(r_au,
                           params['geometry']['w_0'],
                           params['geometry']['mod_r_0'],
@@ -127,12 +130,12 @@ class JetModel:
                           params['geometry']['epsilon'])
         wr_cells = int(wr_au / csize_au) + 1
 
+        # Add jet-width to grid dimensions
         x_cells += int(wr_cells * np.cos(np.radians(pa)) + 1) * 2
         y_cells += wr_cells * 2 + 2
         z_cells += int(wr_cells * np.sin(np.radians(pa)) + 1) * 2
 
         return x_cells, y_cells, z_cells
-
 
     @staticmethod
     def py_to_dict(py_file: str) -> Dict:

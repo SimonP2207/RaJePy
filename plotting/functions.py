@@ -962,40 +962,40 @@ def rt_plot(run: 'ContinuumRun', percentile: float = 5.,
     z_extent = np.shape(flux)[0] * csize_as
 
     flux_min = np.nanpercentile(flux, percentile)
-    im_flux = r_ax.imshow(flux,
+    im_flux = r_ax.imshow(flux[:, ::-1],
                           norm=LogNorm(vmin=flux_min,
                                        vmax=np.nanmax(flux)),
-                          extent=(-x_extent / 2., x_extent / 2.,
+                          extent=(x_extent / 2., -x_extent / 2.,
                                   -z_extent / 2., z_extent / 2.),
                           cmap='gnuplot2_r', aspect="equal")
 
-    r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
+    r_ax.set_xlim(np.array(r_ax.get_ylim())[::-1] * aspect)
     make_colorbar(r_cax, np.nanmax(flux), cmin=flux_min,
                   position='right', orientation='vertical',
                   numlevels=50, colmap='gnuplot2_r',
                   norm=im_flux.norm)
 
     tau_min = np.nanpercentile(taus, percentile)
-    im_tau = m_ax.imshow(taus,
+    im_tau = m_ax.imshow(taus[:, ::-1],
                          norm=LogNorm(vmin=tau_min,
                                       vmax=np.nanmax(taus)),
-                         extent=(-x_extent / 2., x_extent / 2.,
+                         extent=(x_extent / 2., -x_extent / 2.,
                                  -z_extent / 2., z_extent / 2.),
                          cmap='Blues', aspect="equal")
-    m_ax.set_xlim(np.array(m_ax.get_ylim()) * aspect)
+    m_ax.set_xlim(np.array(m_ax.get_ylim())[::-1] * aspect)
     make_colorbar(m_cax, np.nanmax(taus), cmin=tau_min,
                   position='right', orientation='vertical',
                   numlevels=50, colmap='Blues',
                   norm=im_tau.norm)
 
     em_min = np.nanpercentile(ems, percentile)
-    im_EM = l_ax.imshow(ems,
+    im_EM = l_ax.imshow(ems[:, ::-1],
                         norm=LogNorm(vmin=em_min,
                                      vmax=np.nanmax(ems)),
-                        extent=(-x_extent / 2., x_extent / 2.,
+                        extent=(x_extent / 2., -x_extent / 2.,
                                 -z_extent / 2., z_extent / 2.),
                         cmap='cividis', aspect="equal")
-    l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
+    l_ax.set_xlim(np.array(l_ax.get_ylim())[::-1] * aspect)
     make_colorbar(l_cax, np.nanmax(ems), cmin=em_min,
                   position='right', orientation='vertical',
                   numlevels=50, colmap='cividis',
@@ -1015,7 +1015,7 @@ def rt_plot(run: 'ContinuumRun', percentile: float = 5.,
     r_ax.axes.yaxis.set_ticklabels([])
 
     for ax in axes:
-        ax.contour(np.linspace(-x_extent / 2., x_extent / 2.,
+        ax.contour(np.linspace(x_extent / 2., -x_extent / 2.,
                                np.shape(flux)[1]),
                    np.linspace(-z_extent / 2., z_extent / 2.,
                                np.shape(flux)[0]),
