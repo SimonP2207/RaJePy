@@ -5,7 +5,6 @@ Handles all casa task wrappers (if that's the correct word!)
 @author: simon
 """
 import os
-
 import numpy as np
 
 

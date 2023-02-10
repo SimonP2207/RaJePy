@@ -189,15 +189,15 @@ def xyz_to_rwp(x: Union[float, np.ndarray],
     Parameters
     ----------
     x : float
-        x-coordinate
+        x-coordinate [au]
     y : float
-        y-coordinate
+        y-coordinate [au]
     z : float
-        z-coordinate
+        z-coordinate [au]
     inc : float
-        Inclination of system (deg)
+        Inclination of system [deg]
     pa : float
-        Position angle of system (deg)
+        Position angle of system [deg]
 
     Returns
     -------
@@ -234,7 +234,7 @@ def xyz_rotate(x: Union[float, np.ndarray],
         Rotation angle around y-axis (right-handed), deg
     order
         Order in which to rotate. Default is 'xy' indicating rotate around
-        the x-axis first, the y-axis second. 'yx' only other legal value.
+        the x-axis first, the y-axis second. 'yx' only other allowed value.
 
     Returns
     -------

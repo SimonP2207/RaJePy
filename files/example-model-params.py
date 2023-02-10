@@ -22,15 +22,15 @@ params = {
     "grid": {"n_x": 50,  # No. of cells in x
              "n_y": 400,  # No. of cells in y
              "n_z": 50,  # No. of cells in z
-             "l_z": 2.,  # Length of z-axis. Overrides n_x/n_y/n_z
-             "c_size": 0.2,  # Cell size [au]
+             "l_z": 1.,  # Length of z-axis. Overrides n_x/n_y/n_z
+             "c_size": 0.5,  # Cell size [au]
              },
     "geometry": {"epsilon": 7. / 9.,  # Jet width index
                  "opang": 25.,  # Jet opening angle [deg]
                  "w_0": 1.,  # Half-width of jet base [au]
                  "r_0": 1.,  # Launching radius [au]
-                 "inc": 90.,  # Inclination angle where 0 <= i <= 90 [deg]
-                 "pa": 0.,  # BLUE (approaching) jet position angle [deg]
+                 "inc": 62.,  # Inclination angle where 0 <= i <= 90 [deg]
+                 "pa": 20.,  # BLUE (approaching) jet position angle [deg]
                  "rotation": "CCW",  # Rotation sense, either "CCW" or "CW"
                  },
     "power_laws": {"q_v": 0.,  # Velocity index
@@ -48,9 +48,9 @@ params = {
                    "mlr_bj": 1e-7,  # BLUE jet steady-state MLR [Msol/yr]
                    "mlr_rj": 5e-8,  # RED jet steady-state MLR [Msol/yr]
                    },
-    "ejection": {"t_0": np.array([0.5, 0.75, 1., 2.]),  # Peak times of bursts [yr]
-                 "hl": np.array([0.15, 0.15, 0.45, 0.5]),  # Half-lives of bursts [yr]
-                 "chi": np.array([5., 5., 2.5, 10.]),  # Burst factors
-                 "which": np.array(["R", "B", "B", "RB"])  # Which jet the burst relates to
+    "ejection": {"t_0": np.array([]),  # Peak times of bursts [yr]
+                 "hl": np.array([]),  # Half-lives of bursts [yr]
+                 "chi": np.array([]),  # Burst factors
+                 "which": np.array([])  # Which jet the burst relates to
                  }
     }

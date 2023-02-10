@@ -103,39 +103,36 @@ class JetModel:
         Calculate grid dimensions from observed jet length (l_z) and other
         parameters
         """
-        # Calculate max extent of jet in x, y, and z directions
-        l_xz_au = params['grid']['l_z'] * params['target']['dist']
-        xmax_au = l_xz_au * np.sin(np.radians(params["geometry"]["pa"]))
-        ymax_au = l_xz_au * np.tan(np.radians(90. - params["geometry"]["inc"]))
-        zmax_au = l_xz_au * np.cos(np.radians(params["geometry"]["pa"]))
+        csize_au = params['grid']['c_size']
+        dist_au = params['target']['dist'] * con.parsec / con.au
+        lz = params['grid']['l_z']
+        lz_au = np.tan(lz * con.arcsec) * dist_au
+        pa = params['geometry']['pa']
 
-        # Infer maximum value for r(x, y, z) in au
-        rmax_au, _, __ = mgeom.xyz_to_rwp(xmax_au, ymax_au, zmax_au,
-                                          params["geometry"]["inc"],
-                                          params["geometry"]["pa"])
+        x_au, _, z_au = mgeom.xyz_rotate(0., 0., lz_au, 0.,
+                                         params['geometry']['pa'], 'xy')
 
-        # Calculate maximum value for w(x, y, z) in au
-        wmax_au = mgeom.w_r(rmax_au,
-                            params["geometry"]["w_0"],
-                            params["geometry"]["mod_r_0"],
-                            params["geometry"]["r_0"],
-                            params["geometry"]["epsilon"])
+        _, y_au, _ = mgeom.xyz_rotate(0., 0., lz_au,
+                                      90 - params['geometry']['inc'], 0., 'xy')
+        r_au = np.sqrt(np.sum(np.array([x_au, y_au, z_au]) ** 2.))
 
-        # Now in number of cells
-        wmax_cells = int(np.ceil(np.abs(wmax_au / params["grid"]["c_size"])))
+        x_cells = (int(np.abs(x_au / 2) / csize_au) + 1) * 2
+        y_cells = (int(np.abs(y_au / 2) / csize_au) + 1) * 2
+        z_cells = (int(np.abs(z_au / 2) / csize_au) + 1) * 2
 
-        nx = int(np.ceil(np.abs(xmax_au / params["grid"]["c_size"])))
-        ny = int(np.ceil(np.abs(ymax_au / params["grid"]["c_size"])))
-        nz = int(np.ceil(np.abs(zmax_au / params["grid"]["c_size"])))
+        wr_au = mgeom.w_r(r_au,
+                          params['geometry']['w_0'],
+                          params['geometry']['mod_r_0'],
+                          params['geometry']['r_0'],
+                          params['geometry']['epsilon'])
+        wr_cells = int(wr_au / csize_au) + 1
 
-        # Make sure jet's width within cell grid. Especially pertinent if
-        # inclination or position angles are 0, 90, 180 or 270 deg
-        nx, ny, nz = [n + 2 * wmax_cells for n in (nx, ny, nz)]
+        x_cells += int(wr_cells * np.cos(np.radians(pa)) + 1) * 2
+        y_cells += wr_cells * 2 + 2
+        z_cells += int(wr_cells * np.sin(np.radians(pa)) + 1) * 2
 
-        # Enforce even number of cells in x, y and z dimensions
-        nx, ny, nz = [_ if _ % 2 == 0 else _ + 1 for _ in (nx, ny, nz)]
+        return x_cells, y_cells, z_cells
 
-        return nx, ny, nz
 
     @staticmethod
     def py_to_dict(py_file: str) -> Dict:
@@ -203,7 +200,7 @@ class JetModel:
 
         # Determine number of cells in x, y, and z-directions
         if self.params['grid']['l_z'] is not None:
-            nx, ny, nz = JetModel.lz_to_grid_dims(self.params)
+            nx, ny, nz = self.lz_to_grid_dims(self.params)
             self.log.add_entry("INFO",
                                'For a (bipolar) jet length of {:.1f}", cell '
                                'size of {:.2f}au and distance of {:.0f}pc, a '
@@ -440,7 +437,7 @@ class JetModel:
         None.
 
         """
-        assert which in ('R', 'B')
+        assert which in ('R', 'B', 'RB', 'BR')
 
         def func(fnc: Callable[[float], float], _t_0: float, _peak_jml: float,
                  _half_life: float) -> Callable[[float], float]:
@@ -474,6 +471,9 @@ class JetModel:
             self._jml_t_rj = func(self._jml_t_rj, t_0, peak_jml, half_life)
 
         elif 'B' in which.upper():
+            self._jml_t_bj = func(self._jml_t_bj, t_0, peak_jml, half_life)
+        elif which.upper() in ('RB', 'BR'):
+            self._jml_t_rj = func(self._jml_t_rj, t_0, peak_jml, half_life)
             self._jml_t_bj = func(self._jml_t_bj, t_0, peak_jml, half_life)
         else:
             raise ValueError('Help!')
@@ -751,7 +751,7 @@ class JetModel:
             1: np.float16(0.020765),
             2: np.float16(0.145145),
             3: np.float16(0.247302),
-            4: np.float16(0.5),  # np.float16(0.538722),
+            4: np.float16(0.538722),
             5: np.float16(0.752698),
             6: np.float16(0.854855),
             7: np.float16(0.979235),
@@ -766,7 +766,13 @@ class JetModel:
             ffs = da.where(self.n_verts_inside == n_verts, fill_factor, ffs)
 
         # Mask empty cells with NaNs
+        lz_au = np.tan(self.params['grid']['l_z'] * con.arcsec) * \
+                self.params['target']['dist'] * con.parsec / con.au
         ffs = da.where(ffs > 1e-6, ffs, np.NaN)
+
+        # Chop off the jet beyond model-parameters' l_z value
+        ffs = da.where(np.sqrt(self.xx ** 2. + self.zz ** 2.) > (lz_au / 2),
+                       np.NaN, ffs)
         areas = da.where(areas > 1e-6, areas, np.NaN)
 
         # Run cell fill-factor and area dask-computations and wrap in TQDM
@@ -831,6 +837,10 @@ class JetModel:
         desired_chunk_nbytes = 20 * 1e6  # 20MB
         size_of_array = np.prod(shape) * dtype_sizes[dtype]
         n_chunks = size_of_array / desired_chunk_nbytes
+
+        if n_chunks < 1:
+            n_chunks = 1
+
         chunk_dim = int(n_chunks ** (1. / len(shape)))
         chunk_shape = tuple([arr_dim // chunk_dim for arr_dim in shape])
 
@@ -2439,26 +2449,26 @@ class Pipeline:
             if os.path.exists(self.model_file):
                 self.model = JetModel.load_model(self.model_file)
 
-        try:
-            pfunc.geometry_plot(self.model, show_plot=False,
-                                savefig=os.sep.join([self.dcy, 'GridPlot.pdf']))
-        except Exception as e:
-            err_type = str(type(e)).split("'")[1]
-            self.log.add_entry('ERROR',
-                               "Matplotlib threw the following error whilst "
-                               "trying to plot model geometry:"
-                               f"\n{err_type}: {e}")
+        returned = pfunc.geometry_plot(self.model, show_plot=False,
+                                       savefig=os.sep.join([self.dcy,
+                                                            'GridPlot.pdf']))
 
-        try:
-            pfunc.jml_profile_plot(self, show_plot=False,
-                                   savefig=os.sep.join([self.dcy,
-                                                        'JMLPlot.pdf']))
-        except Exception as e:
-            err_type = str(type(e)).split("'")[1]
+        if isinstance(returned, tuple) and isinstance(returned[0], Exception):
+            self.log.add_entry('ERROR',
+                               "Matplotlib threw the following error(s) whilst "
+                               "trying to plot model geometry:\n"
+                               f"{returned[1]}")
+
+        returned = pfunc.jml_profile_plot(
+            self, show_plot=False,
+            savefig=os.sep.join([self.dcy, 'JMLPlot.pdf'])
+        )
+
+        if isinstance(returned, tuple) and isinstance(returned[0], Exception):
             self.log.add_entry('ERROR',
                                "Matplotlib threw the following error whilst "
                                "trying to plot JML-profile:"
-                               f"\n{err_type}: {e}")
+                               f"{returned[1]}]")
 
         n_runs = len(self.runs)
         for idx, run in enumerate(self.runs):
@@ -2489,14 +2499,20 @@ class Pipeline:
                 model_plotfile = os.sep.join([os.path.dirname(run.rt_dcy),
                                               "ModelPlot.pdf"])
                 if not os.path.exists(model_plotfile) or clobber:
-                    try:
-                        pfunc.model_plot(self.model, savefig=model_plotfile,
-                                         show_plot=False)
-                    except Exception as e:
-                        err_type = str(type(e)).split("'")[1]
-                        self.log.add_entry('ERROR',
-                                           "Matplotlib threw the following error:"
-                                           f"\n{err_type}: {e}")
+                    returned = pfunc.model_plot(
+                        self.model, savefig=model_plotfile, show_plot=False
+                    )
+
+                    if (isinstance(returned, tuple) and
+                        isinstance(returned[0], Exception)):
+
+                        traceback_txt = '\n'.join(returned[1])
+                        self.log.add_entry(
+                            'ERROR',
+                            "Matplotlib threw the following error(s) whilst "
+                            "trying to plot the physical model:\n"
+                            f"{returned[1]}"
+                        )
 
                 if run.radiative_transfer:
                     self.log.add_entry(mtype="INFO",
@@ -2988,13 +3004,16 @@ class Pipeline:
                                "Saving radio SED figure to "
                                f"{save_file.replace('png', '(png,pdf)')} "
                                f"for time {year}yr")
-            try:
-                pfunc.sed_plot(self, year, savefig=save_file)
-            except Exception as e:
-                err_type = str(type(e)).split("'")[1]
-                self.log.add_entry('ERROR',
-                                   "Matplotlib threw the following error:"
-                                   f"\n{err_type}: {e}")
+
+            returned = pfunc.sed_plot(self, year, savefig=save_file)
+            if (isinstance(returned, tuple) and
+                    isinstance(returned[0], Exception)):
+                traceback_txt = '\n'.join(returned[1])
+                self.log.add_entry(
+                    'ERROR',
+                    "Matplotlib threw the following error(s) whilst "
+                    f"trying to plot radio SED:\n{traceback_txt}"
+                )
 
         self.save(self.save_file)
         self.model.save(self.model_file)

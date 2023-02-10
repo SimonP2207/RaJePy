@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from typing import Union, Tuple
+from functools import wraps
 import numpy as np
 import scipy.constants as con
 import matplotlib.axes
@@ -10,6 +11,21 @@ from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 import astropy.units as u
 from astropy.io import fits
+
+
+def catch_exception(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        """Wrapper function"""
+        import traceback
+
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            traceback_txt = traceback.format_exc()
+            return e, traceback_txt
+
+    return wrapper
 
 
 def equalise_axes(ax, fix_x=False, fix_y=False, fix_z=False):
@@ -460,6 +476,7 @@ def diagnostic_plot(jm: 'JetModel', show_plot: bool = False,
     return None
 
 
+@catch_exception
 def model_plot(jm: 'JetModel', show_plot: bool = False,
                savefig: Union[bool, str] = False):
     """
@@ -690,8 +707,6 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
 
     if show_plot:
         plt.show()
-
-    return None
 
 
 # def rt_plot(jm: 'JetModel', freq: float, percentile: float = 5.,
@@ -1056,13 +1071,15 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
     -------
     None
     """
-    from RaJePy import cnsts
+    from RaJePy import cnsts, JetModel, Pipeline
     from RaJePy import _config as cfg
 
-    if hasattr(inp, 'runs'):
+    # if hasattr(inp, 'runs'):
+    if isinstance(inp, Pipeline):
         jm = inp.model
         run_years = list(set([_.year * con.year for _ in inp.runs]))
-    elif hasattr(inp, 'grid'):
+    # elif hasattr(inp, 'grid'):
+    elif isinstance(inp, JetModel):
         jm = inp
         run_years = []
     else:
@@ -1162,7 +1179,7 @@ def jml_profile_plot(inp: Union['JetModel', 'Pipeline'],
 
     return fig, ax
 
-
+@catch_exception
 def geometry_plot(jm: 'JetModel', show_plot: bool = False,
                   savefig: Union[bool, str] = False):
     """
