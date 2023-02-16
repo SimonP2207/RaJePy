@@ -181,6 +181,8 @@ class JetModel:
         self._name = self.params['target']['name']
         self._csize = self._FLOAT_TYPE(self.params['grid']['c_size'])
 
+        # TODO: Calculation of mr0, q_n and q_tau should not be in the
+        #  constructor. They should already be present in params by this stage
         # Automatically calculated parameters
         mr0 = mgeom.mod_r_0(self._params['geometry']['opang'],
                             self._params['geometry']['epsilon'],
@@ -233,6 +235,7 @@ class JetModel:
         self._n_verts_inside = None  # Number of vertices inside jet boundary
         self._ff = None  # cell fill factors
         self._areas = None  # cell projected areas along y-axis
+        self._path_lengths = None  # cell projected path lengths along y-axis
         self._idxs = None  # Grid of cell indices
         self._grid = None  # grid of cell-centre positions
         self._rwp = None  # Grid of cells' centroids' r, w, p coordinates
@@ -698,11 +701,10 @@ class JetModel:
 
         return self._n_verts_inside
 
-    @property
-    def fill_factor(self) -> np.ndarray:
+    def calculate_ffs_areas_pls(self) -> np.ndarray:
         """
         Calculate the fraction of each of the grid's cells falling within the
-        jet's hard boundary define by w(r) (see RaJePy.maths.geometry.w_r
+        jet's hard boundary defined by w(r) (see RaJePy.maths.geometry.w_r
         method), or 'fill factors'
         """
         if self._ff is not None:
@@ -721,7 +723,8 @@ class JetModel:
 
         # Projected areas within jet boundary, projected along the y-axis (i.e.
         # the line of sight)
-        areas = np.zeros(np.shape(self.xx), dtype=np.float16)
+        chunk = self._chunk_size(self.xx.shape, np.float16)
+        areas = da.zeros(np.shape(self.xx), dtype=np.float16, chunks=chunk)
 
         los_verts = np.sum([(self.verts_inside[0] | self.verts_inside[2]),
                             (self.verts_inside[1] | self.verts_inside[3]),
@@ -730,19 +733,30 @@ class JetModel:
                            axis=0, dtype=np.uint8)
 
         # Fraction of voxels' volumes within the jet boundary, or 'fill factors'
-        ffs = da.zeros(np.shape(self.xx), dtype=np.float16)
+        ffs = da.zeros(np.shape(self.xx), dtype=np.float16, chunks=chunk)
 
         # Average area of cells with differing number of line-of-sight vertices
-        # within the jet boundary i.e. cell projected onto x/z plane. Average
-        # areas established via random generation of coordinates for
-        # intersection of jet boundary with cell edges whilst varying number of
-        # cell vertices within jet boundary
-        _AREA_FROM_N_LOS_VERTICES_INSIDE = {
-            0: np.float16(0.0),
-            1: np.float16(0.125),
-            2: np.float16(0.5),
-            3: np.float16(0.875),
-            4: np.float16(1.0),
+        # and all vertices within the jet boundary i.e. cell projected onto x/z
+        # plane. Average areas established via random generation of coordinates
+        # for intersection of jet boundary with cell edges whilst varying number
+        # of cell vertices within jet boundary. Keys are (n vertices inside,
+        # n l.o.s. vertices inside) and values are fraction of cell area
+        _AREA_FROM_N_VERT_INSIDE = {
+            (0, 0): np.float16(0.0),
+            (1, 1): np.float16(0.11111),
+            (2, 1): np.float16(0.13888),
+            (2, 2): np.float16(0.33333),
+            (3, 2): np.float16(0.3611),
+            (3, 3): np.float16(0.47222),
+            (4, 2): np.float16(0.5),
+            (4, 3): np.float16(0.5),
+            (4, 4): np.float16(0.5),
+            (5, 3): np.float16(0.63888),
+            (5, 4): np.float16(0.52778),
+            (6, 3): np.float16(0.86111),
+            (6, 4): np.float16(0.66667),
+            (7, 4): np.float16(0.88889),
+            (8, 4): np.float16(1.),
         }
 
         # Average fill factor of cells with differing number of vertices within
@@ -754,7 +768,7 @@ class JetModel:
             1: np.float16(0.020765),
             2: np.float16(0.145145),
             3: np.float16(0.247302),
-            4: np.float16(0.538722),
+            4: np.float16(0.5),  # 0.538722
             5: np.float16(0.752698),
             6: np.float16(0.854855),
             7: np.float16(0.979235),
@@ -762,8 +776,10 @@ class JetModel:
         }
 
         # Factors worked out by uniform random number generation of areas
-        for n_los_verts, area in _AREA_FROM_N_LOS_VERTICES_INSIDE.items():
-            areas = da.where(los_verts == n_los_verts, area, areas)
+        for (n_verts, n_los_verts), area in _AREA_FROM_N_VERT_INSIDE.items():
+            areas = da.where((los_verts == n_los_verts) &
+                             (self.n_verts_inside == n_verts),
+                             area, areas)
 
         for n_verts, fill_factor in _FF_FROM_N_VERTICES_INSIDE.items():
             ffs = da.where(self.n_verts_inside == n_verts, fill_factor, ffs)
@@ -797,10 +813,23 @@ class JetModel:
             print(time.strftime('INFO: Finished in %Hh%Mm%Ss',
                                 time.gmtime(now - then)))
 
+        self._path_lengths = self._ff / self._areas
+
+    @property
+    def fill_factor(self) -> Union[None, npt.NDArray]:
+        """
+        Fraction of each of the grid's cells falling within the jet's hard
+        boundary defined by w(r) (see RaJePy.maths.geometry.w_r method)
+        """
+        if self._ff is not None:
+            return self._ff
+
+        self.calculate_ffs_areas_pls()
+
         return self._ff
 
     @property
-    def areas(self) -> Union[None, np.ndarray]:
+    def areas(self) -> Union[None, npt.NDArray]:
         """
         Areas of jet-filled portion of cells as projected on to the y-axis
         (hopefully, custom orientations will address this so area is as
@@ -810,9 +839,57 @@ class JetModel:
         if self._areas is not None:
             return self._areas
 
-        _ = self.fill_factor  # Areas calculated as part of fill factors
+        self.calculate_ffs_areas_pls()
 
         return self._areas
+
+    @property
+    def path_lengths(self):
+        """
+        Average path length through jet within cells, in units of cell size
+        """
+        if self._path_lengths is not None:
+            return self._path_lengths
+
+        self.calculate_ffs_areas_pls()
+
+        return self._path_lengths
+
+    @staticmethod
+    def _chunk_size(arr_shape: Tuple[int], arr_dtype: type,
+                   desired_chunk_nbytes: Union[float, int] = 20e6
+                   ) -> Tuple[int]:
+        """
+        Determine ideal chunk shape for dask array
+
+        Parameters
+        ----------
+        arr_shape
+            Shape of array
+        arr_dtype
+            Float type of array (one of np.float16, np.float32, or np.float64)
+        desired_chunk_nbytes
+            Desired chunk size in bytes. Default is 20 MB
+
+        Returns
+        -------
+        Ideal shape of chunks
+        """
+        # Chunk sizes of between 100MB and 1GB are ok according to online
+        # forums, however from experimenting, I find a chunk size of ~20MB to be
+        # good. Forums do state that more than 10000 chunks affects performance,
+        # however
+        dtype_sizes = {np.float16: 2, np.float32: 4, np.float64: 8}
+
+        arr_total_bytes = np.prod(arr_shape) * dtype_sizes[arr_dtype]
+        n_chunks = arr_total_bytes / desired_chunk_nbytes
+
+        if n_chunks < 1:
+            n_chunks = 1
+
+        chunk_dim = int(n_chunks ** (1. / len(arr_shape)))
+
+        return tuple([arr_dim // chunk_dim for arr_dim in arr_shape])
 
     @property
     def ts(self) -> npt.NDArray:
@@ -831,24 +908,10 @@ class JetModel:
         # forums, however from experimenting, I find a chunk size of ~20MB to be
         # good. Forums do state that more than 10000 chunks affects performance,
         # however
-        size = self.xx.nbytes
-        shape = self.xx.shape
-        dtype = np.float32
-
-        dtype_sizes = {np.float16: 2, np.float32: 4, np.float64: 8}
-
-        desired_chunk_nbytes = 20 * 1e6  # 20MB
-        size_of_array = np.prod(shape) * dtype_sizes[dtype]
-        n_chunks = size_of_array / desired_chunk_nbytes
-
-        if n_chunks < 1:
-            n_chunks = 1
-
-        chunk_dim = int(n_chunks ** (1. / len(shape)))
-        chunk_shape = tuple([arr_dim // chunk_dim for arr_dim in shape])
+        chunk = self._chunk_size(self.xx.shape, np.float32)
 
         r_0 = self.params['geometry']['r_0']
-        r = da.from_array(da.abs(self.rr), chunks=chunk_shape)
+        r = da.from_array(da.abs(self.rr), chunks=chunk)
 
         # If the cell interesects the base of the jet, calculate the average
         # r-value of that cell from the jet base (at r_0) to the distal (from
@@ -863,7 +926,7 @@ class JetModel:
         # the jet base) edge of the cell
         # r = np.where((r < r_0) & ((r + self.csize / 2.) >= r_0),
         #              (r_0 + r + self.csize / 2.) / 2., r)
-        w = da.from_array(self.ww, chunks=chunk_shape)
+        w = da.from_array(self.ww, chunks=chunk)
 
         ts = mgeom.t_rw(r, w, params=self.params)
         ts *= con.year
@@ -1074,7 +1137,7 @@ class JetModel:
         vz = np.nan_to_num(vz, nan=np.NaN, posinf=np.NaN,
                            neginf=np.NaN) * np.sign(self.rr)
 
-        vr = mphys.v_rot(self.rr, self.rreff, mgeom.rho(self.rr, r_0, mr0),
+        vr = mphys.v_rot(self.rreff, mgeom.rho(self.rr, r_0, mr0),
                          self.params['geometry']['epsilon'],
                          self.params['target']['M_star'])
 
@@ -1128,7 +1191,7 @@ class JetModel:
         """
         ems = (self.number_density * self.ion_fraction) ** 2. * \
               (self.csize * con.au / con.parsec *
-               (self.fill_factor / self.areas))
+               self.path_lengths)
 
         ems = np.nansum(ems, axis=self.los_axis)
 
@@ -1198,7 +1261,7 @@ class JetModel:
                                              mrrl.ni_from_ne(n_es, element),
                                              self.temperature, z_atom, en)
                 taus = kappa_rrl_lte * (self.csize * con.au * 1e2 *
-                                        (self.fill_factor / self.areas))
+                                        self.path_lengths)
                 if collapse:
                     taus = np.nansum(taus, axis=self.los_axis)
 
@@ -1224,7 +1287,7 @@ class JetModel:
                                          n_es, mrrl.ni_from_ne(n_es, element),
                                          self.temperature, z_atom, en)
             tau_rrl = kappa_rrl_lte * (self.csize * con.au * 1e2 *
-                                       (self.fill_factor / self.areas))
+                                       self.path_lengths)
 
             if collapse:
                 tau_rrl = np.nansum(tau_rrl, axis=self.los_axis)
@@ -1417,7 +1480,7 @@ class JetModel:
 
                 tau = (0.018 * self.temperature ** -1.5 * nu ** -2. *
                        n_es ** 2. * (self.csize * con.au * 1e2 *
-                                     (self.fill_factor / self.areas)) * gff)
+                                     self.path_lengths) * gff)
                 if collapse:
                     tau = np.nansum(tau, axis=self.los_axis)
                 tff[idx] = tau
@@ -1449,7 +1512,7 @@ class JetModel:
                 gff = 11.95 * self.temperature ** 0.15 * freq ** -0.1
             tff = (0.018 * self.temperature ** -1.5 * freq ** -2. *
                    n_es ** 2. * (self.csize * con.au * 1e2 *
-                                 (self.fill_factor / self.areas)) * gff)
+                                 self.path_lengths) * gff)
 
             if collapse:
                 tff = np.nansum(tff, axis=self.los_axis)
@@ -2569,9 +2632,22 @@ class Pipeline:
                         self.log.add_entry(mtype="INFO",
                                            entry="Plotting radiative transfer "
                                                  f"results to {rt_plot}")
-                        pfunc.rt_plot(run, savefig=rt_plot)
 
-                    else:
+                        if not os.path.exists(rt_plot) or clobber:
+                            returned = pfunc.rt_plot(run, savefig=rt_plot)
+                            if (isinstance(returned, tuple) and
+                                isinstance(returned[0], Exception)):
+                                traceback_txt = '\n'.join(returned[1])
+                                self.log.add_entry(
+                                    'ERROR',
+                                    "Matplotlib threw the following error(s) "
+                                    "whilst trying to plot the radiative "
+                                    "transfer results model:\n"
+                                    f"{returned[1]}"
+                                )
+
+
+                    elif run.obs_type == 'rrl':
                         if not os.path.exists(run.fits_tau) or clobber:
                             self.log.add_entry(mtype="INFO",
                                                entry="Computing optical depths "
@@ -2602,6 +2678,10 @@ class Pipeline:
                                                      f"{run.fits_flux}",
                                                timestamp=True)
                             fluxes = fits.open(run.fits_flux)[0].data
+
+                    else:
+                        raise ValueError("Observational type of run, "
+                                         f"'{run.obs_type}', not understood")
 
                     if run.obs_type == 'continuum':
                         # For continuum, flux calculated as average sum flux of
@@ -3022,178 +3102,6 @@ class Pipeline:
         self.model.save(self.model_file)
 
         return None  # self.runs[idx]['products']
-
-
-    # TODO: Move this to RaJePy.plotting.functions
-    # def radio_plot(self, run: Union[ContinuumRun, RRLRun],
-    #                percentile: float = 5., savefig: Union[bool, str] = False):
-    #     """
-    #     Generate 3 subplots of (from left to right) flux, optical depth and
-    #     emission measure.
-    #
-    #     Parameters
-    #     ----------
-    #     run : ContinuumRun
-    #         One of the ModelRun instance's runs
-    #
-    #     percentile : float,
-    #         Percentile of pixels to exclude from colorscale. Implemented as
-    #         some edge pixels have extremely low values. Supplied value must be
-    #         between 0 and 100.
-    #
-    #     savefig: bool, str
-    #         Whether to save the radio plot to file. If False, will not, but if
-    #         a str representing a valid path will save to that path.
-    #
-    #     Returns
-    #     -------
-    #     None.
-    #     """
-    #     import matplotlib.pylab as plt
-    #     import matplotlib.gridspec as gridspec
-    #
-    #     plt.close('all')
-    #
-    #     fig = plt.figure(figsize=(cfg.plots['dims']['text'],
-    #                               cfg.plots['dims']['column']))
-    #
-    #     # Set common labels
-    #     fig.text(0.5, 0.0, r'$\Delta\alpha\,\left[^{\prime\prime}\right]$',
-    #              ha='center', va='bottom')
-    #     fig.text(0.05, 0.5, r'$\Delta\delta\,\left[^{\prime\prime}\right]$',
-    #              ha='left', va='center', rotation='vertical')
-    #
-    #     outer_grid = gridspec.GridSpec(1, 3, wspace=0.4)
-    #
-    #     # Flux
-    #     l_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 0],
-    #                                               width_ratios=[5.667, 1],
-    #                                               wspace=0.0, hspace=0.0)
-    #     l_ax = plt.subplot(l_cell[0, 0])
-    #     l_cax = plt.subplot(l_cell[0, 1])
-    #
-    #     # Optical depth
-    #     m_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 1],
-    #                                               width_ratios=[5.667, 1],
-    #                                               wspace=0.0, hspace=0.0)
-    #     m_ax = plt.subplot(m_cell[0, 0])
-    #     m_cax = plt.subplot(m_cell[0, 1])
-    #
-    #     # Emission measure
-    #     r_cell = gridspec.GridSpecFromSubplotSpec(1, 2, outer_grid[0, 2],
-    #                                               width_ratios=[5.667, 1],
-    #                                               wspace=0.0, hspace=0.0)
-    #     r_ax = plt.subplot(r_cell[0, 0])
-    #     r_cax = plt.subplot(r_cell[0, 1])
-    #
-    #     bbox = l_ax.get_window_extent()
-    #     bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
-    #     aspect = bbox.width / bbox.height
-    #
-    #     flux = fits.open(run.fits_flux)[0].data[0]
-    #     taus = fits.open(run.fits_tau)[0].data[0]
-    #     ems = fits.open(run.fits_em)[0].data[0]
-    #
-    #     flux = np.where(flux > 0, flux, np.NaN)
-    #     taus = np.where(taus > 0, taus, np.NaN)
-    #     ems = np.where(ems > 0, ems, np.NaN)
-    #
-    #     # Deal with cube images by averaging along the spectral (1st) axis
-    #     if len(np.shape(flux)) == 3:
-    #         flux = np.nanmean(flux, axis=0)
-    #     if len(np.shape(taus)) == 3:
-    #         taus = np.nanmean(taus, axis=0)
-    #
-    #     csize_as = np.tan(self.model.csize * con.au / con.parsec /
-    #                       self.model.params['target']['dist'])  # radians
-    #     csize_as /= con.arcsec  # arcseconds
-    #     x_extent = np.shape(flux)[1] * csize_as
-    #     z_extent = np.shape(flux)[0] * csize_as
-    #
-    #     flux_min = np.nanpercentile(flux, percentile)
-    #     if np.log10(flux_min) > (np.log10(np.nanmax(flux)) - 1.):
-    #         flux_min = 10 ** (np.floor(np.log10(np.nanmax(flux)) - 1.))
-    #
-    #     im_flux = l_ax.imshow(flux,
-    #                           norm=LogNorm(vmin=flux_min,
-    #                                        vmax=np.nanmax(flux)),
-    #                           extent=(-x_extent / 2., x_extent / 2.,
-    #                                   -z_extent / 2., z_extent / 2.),
-    #                           cmap='gnuplot2_r', aspect="equal")
-    #
-    #     l_ax.set_xlim(np.array(l_ax.get_ylim()) * aspect)
-    #     pfunc.make_colorbar(l_cax, np.nanmax(flux), cmin=flux_min,
-    #                         position='right', orientation='vertical',
-    #                         numlevels=50, colmap='gnuplot2_r',
-    #                         norm=im_flux.norm)
-    #
-    #     tau_min = np.nanpercentile(taus, percentile)
-    #     im_tau = m_ax.imshow(taus,
-    #                          norm=LogNorm(vmin=tau_min,
-    #                                       vmax=np.nanmax(taus)),
-    #                          extent=(-x_extent / 2., x_extent / 2.,
-    #                                  -z_extent / 2., z_extent / 2.),
-    #                          cmap='Blues', aspect="equal")
-    #     m_ax.set_xlim(np.array(m_ax.get_ylim()) * aspect)
-    #     pfunc.make_colorbar(m_cax, np.nanmax(taus), cmin=tau_min,
-    #                         position='right', orientation='vertical',
-    #                         numlevels=50, colmap='Blues',
-    #                         norm=im_tau.norm)
-    #
-    #     em_min = np.nanpercentile(ems, percentile)
-    #     im_em = r_ax.imshow(ems,
-    #                         norm=LogNorm(vmin=em_min,
-    #                                      vmax=np.nanmax(ems)),
-    #                         extent=(-x_extent / 2., x_extent / 2.,
-    #                                 -z_extent / 2., z_extent / 2.),
-    #                         cmap='cividis', aspect="equal")
-    #     r_ax.set_xlim(np.array(r_ax.get_ylim()) * aspect)
-    #     pfunc.make_colorbar(r_cax, np.nanmax(ems), cmin=em_min,
-    #                         position='right', orientation='vertical',
-    #                         numlevels=50, colmap='cividis',
-    #                         norm=im_em.norm)
-    #
-    #     axes = [l_ax, m_ax, r_ax]
-    #     caxes = [l_cax, m_cax, r_cax]
-    #
-    #     l_ax.text(0.9, 0.9, r'a', ha='center', va='center',
-    #               transform=l_ax.transAxes)
-    #     m_ax.text(0.9, 0.9, r'b', ha='center', va='center',
-    #               transform=m_ax.transAxes)
-    #     r_ax.text(0.9, 0.9, r'c', ha='center', va='center',
-    #               transform=r_ax.transAxes)
-    #
-    #     m_ax.axes.yaxis.set_ticklabels([])
-    #     r_ax.axes.yaxis.set_ticklabels([])
-    #
-    #     for ax in axes:
-    #         ax.contour(np.linspace(-x_extent / 2., x_extent / 2.,
-    #                                np.shape(flux)[1]),
-    #                    np.linspace(-z_extent / 2., z_extent / 2.,
-    #                                np.shape(flux)[0]),
-    #                    taus, [1.], colors='w')
-    #         xlims = ax.get_xlim()
-    #         ax.set_xticks(ax.get_yticks())
-    #         ax.set_xlim(xlims)
-    #         ax.tick_params(which='both', direction='in', top=True,
-    #                        right=True)
-    #         ax.minorticks_on()
-    #
-    #     l_cax.text(0.5, 0.5, r'$\left[{\rm mJy \, pixel^{-1}}\right]$',
-    #                ha='center', va='center', transform=l_cax.transAxes,
-    #                color='white', rotation=90.)
-    #     r_cax.text(0.5, 0.5, r'$\left[ {\rm pc \, cm^{-6}} \right]$',
-    #                ha='center', va='center', transform=r_cax.transAxes,
-    #                color='white', rotation=90.)
-    #
-    #     for cax in caxes:
-    #         cax.yaxis.set_label_position("right")
-    #         cax.minorticks_on()
-    #
-    #     if savefig:
-    #         plt.savefig(savefig, bbox_inches='tight', dpi=300)
-    #
-    #     return None
 
 
 class Pointing(object):

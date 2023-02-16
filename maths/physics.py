@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
-from typing import Callable, Union, Iterable
 import os
+from typing import Callable, Union, Iterable
+
 import numpy as np
-import scipy.constants as con
+import numpy.typing as npt
 import pandas as pd
-from mpmath import gammainc
-from RaJePy import cfg
-from RaJePy import cnsts
-from RaJePy.maths import geometry as geom
+import scipy.constants as con
 from uncertainties import ufloat as uf
 
 
@@ -63,15 +61,13 @@ def q_tau(epsilon: float, q_x: float, q_n: float, q_T: float) -> float:
     return epsilon + 2.0 * q_x + 2.0 * q_n - 1.35 * q_T
 
 
-def v_rot(r: Union[float, Iterable], reff: Union[float, Iterable],
+def v_rot(reff: Union[float, Iterable],
           rho: Union[float, Iterable], epsilon: float,
           m_star: float) -> Union[float, Iterable]:
     """
 
     Parameters
     ----------
-    r
-        r-coordinate, au
     reff
         Effective radius (see RaJePy.maths.geometry.r_eff method), au
     rho
@@ -87,7 +83,10 @@ def v_rot(r: Union[float, Iterable], reff: Union[float, Iterable],
     -------
     Rotational velocity in km/s
     """
-    return np.sqrt(con.G * m_star * cnsts.MSOL / (reff * con.au)) * rho ** -epsilon / 1e3
+    from .. import cnsts
+    
+    return np.sqrt(con.G * m_star * cnsts.MSOL /
+                   (reff * con.au)) * rho ** -epsilon / 1e3
 
 
 def tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T,
@@ -133,6 +132,9 @@ def tau_r(r, r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T,
         Optical depth of jet at distance r from central object
 
     """
+    from .. import cnsts
+    from . import geometry as geom
+
     mr0 = geom.mod_r_0(opang, epsilon, w_0 * con.au * 1e2)
     q = epsilon + 2. * q_n + 2. * q_x - 1.35 * q_T
     tau = (2. * cnsts.a_k * (w_0 * con.au * 1e2) * n_0 ** 2. * chi_0 ** 2. *
@@ -222,6 +224,9 @@ def r_tau1(r_0, w_0, n_0, chi_0, T_0, freq, inc, epsilon, q_n, q_x, q_T, opang,
         in au, if arg dist in pc, in arcsec
 
     """
+    from .. import cnsts
+    from . import geometry as geom
+
     m_r_0 = geom.mod_r_0(opang, epsilon, w_0 * con.au * 1e2)
     q = epsilon + 2. * q_n + 2. * q_x - 1.35 * q_T
     rho = (2. * cnsts.a_k * (w_0 * con.au * 1e2) * n_0 ** 2. * chi_0 ** 2. *
@@ -256,6 +261,8 @@ def approx_flux_expected_r86(jm: 'JetModel', freq: float, which: str):
         Flux (Jy).
 
     """
+    from .. import cnsts
+
     if type(freq) == list:
         freq = np.array(freq)
 
@@ -317,6 +324,9 @@ def flux_expected_r86(jm, freq, which: str, y_max, y_min=None):
         Exact flux expected from Reynolds (1986)'s analytical model (Jy).
 
     """
+    from mpmath import gammainc
+    from .. import cnsts
+
     # Parse constants into local variables
     inc = jm.params['geometry']['inc']  # degrees
     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
@@ -375,6 +385,9 @@ def flux_expected_r86(jm, freq, which: str, y_max, y_min=None):
 
 
 def flux_int_wrapped(freq: float, jm) -> Callable:
+    from .. import cnsts
+    from . import geometry as geom
+
     # Parse constants into local variables
     inc = jm.params['geometry']['inc']  # degrees
     w_0 = jm.params['geometry']['w_0'] * con.au * 1e2  # cm
@@ -454,6 +467,8 @@ def mlr_from_n_0(n_0: float, v_0: float, w_0: float, mu: float, q_nd: float,
     -------
     Jet mass loss rate in (M_sol / yr)
     """
+    from .. import cnsts
+    
     a = q_nd + q_nv
 
     # Avoid ZeroDivisionError
@@ -466,7 +481,7 @@ def mlr_from_n_0(n_0: float, v_0: float, w_0: float, mu: float, q_nd: float,
     constant = 2. * con.pi * (mu * atomic_mass('H')) * (n_0 * 1e6) *\
                (v_0 * 1e3) * (w_0 * con.au) ** 2.
 
-    return (constant *\
+    return (constant *
             (r1 ** 2. + r2 * (r2 * (a + 1.) - r1 * (a + 2.)) * (r2 / r1) ** a) /
             ((r2 - r1) ** 2. * (a + 1.) * (a + 2.))) / cnsts.MSOL * con.year
 
@@ -499,6 +514,8 @@ def n_0_from_mlr(mlr: float, v_0: float, w_0: float, mu: float, q_nd: float,
     -------
     Central number density at jet-base (cm^-3)
     """
+    from .. import cnsts
+
     a = q_nd + q_nv
 
     # Avoid ZeroDivisionError
@@ -574,37 +591,134 @@ def blackbody_nu(freq: float, temp: float) -> float:
     return p1 * p2 ** -1.
 
 
-def nu_rrl(n, dn=1, atom="H"):
+def nu_rrl(n: int, dn: int = 1, atom: str = "H") -> float:
     """
     Calculate radio recombination line frequency(s)
 
     Parameters
     ----------
-    n : int, float or Iterable
+    n
         Electronic transition number.
 
-    dn : int
+    dn
         Number of levels transitioned e.g. for alpha RRLs dn = 1
 
-    atom : str
+    atom
         Chemical symbol for atom to compute RRLs for e.g. 'H' for Hydrogen,
-        'He' for Helium etc. Available for Hydrogen up to Magnesium.
+        'He' for Helium etc
+
     Returns
     -------
-    float or Iterable
-        DESCRIPTION.
+    nu0
+        Rest frequency of the radio recombination line [Hz]
 
     """
+    from .. import cnsts
+
+    if atom not in cnsts.NZ:
+        available = list(cnsts.NZ.keys())
+        raise ValueError("RRL rest frequencies only available for "
+                         f"{', '.join(available[:-1])} and {available[-1]}, "
+                         f"not {atom}")
+
     n_p, n_n = cnsts.NZ[atom]
 
     mass = atomic_mass(atom)
     mass -= con.m_e * n_p
-
     r_m = con.Rydberg * (1. + con.m_e / mass) ** -1.
-    return r_m * con.c * (1. / n ** 2. - 1. / (n + dn) ** 2.)
+
+    nu0 = r_m * con.c * (1. / n ** 2. - 1. / (n + dn) ** 2.)
+
+    return nu0
 
 
-def atomic_mass(atom):
+def vlsr_to_freq(vlsr: Union[float, npt.NDArray],
+                 nu0: float) -> Union[float, npt.NDArray]:
+    """
+    Convert velocity (local standard of rest) to frequency
+
+    Parameters
+    ----------
+    vlsr
+        Velocity(s) [m/s]
+    nu0
+        Rest frequency [Hz]
+
+    Returns
+    -------
+    nu
+        Observed frequency(s) [Hz]
+    """
+    nu = nu0 * (1. - vlsr / con.c)
+
+    return nu
+
+
+def freq_to_vlsr(nu: Union[float, npt.NDArray],
+                 nu0: float) -> Union[float, npt.NDArray]:
+    """
+    Convert frequency to velocity (local standard of rest)
+
+    Parameters
+    ----------
+    nu
+        Observed frequency(s) [Hz]
+    nu0
+        Rest frequency [Hz]
+
+    Returns
+    -------
+    vlsr
+        Velocity(s) [m/s]
+    """
+    vlsr = (1. - (nu / nu0)) * con.c
+
+    return vlsr
+
+
+def chanwidth_vlsr_to_hz(dvlsr: Union[float, npt.NDArray],
+                         nu0: float) -> Union[float, npt.NDArray]:
+    """
+    Convert a channel width from m/s to Hz
+
+    Parameters
+    ----------
+    dvlsr
+        Channel width(s) [m/s]
+    nu0
+        Rest frequency [Hz]
+
+    Returns
+    -------
+    dnu
+        Channel width(s) [Hz]
+    """
+    dnu = nu0 - vlsr_to_freq(dvlsr, nu0)
+
+    return dnu
+
+
+def chanwidth_hz_to_vlsr(dnu: Union[float, npt.NDArray],
+                         nu0: float) -> Union[float, npt.NDArray]:
+    """
+    Convert a channel width from Hz to m/s
+
+    Parameters
+    ----------
+    dnu
+        Channel width(s) [Hz]
+    nu0
+        Rest frequency [Hz]
+
+    Returns
+    -------
+    dvlsr
+        Channel width(s) [m/s]
+    """
+    return freq_to_vlsr(nu0 - dnu, nu0)
+
+
+def atomic_mass(atom: str) -> float:
     """
     Calculate mass of atom
 
@@ -617,6 +731,8 @@ def atomic_mass(atom):
     -------
     Mass of atom in kg.
     """
+    from .. import cfg, cnsts
+
     ams = pd.read_pickle(cfg.dcys["files"] + os.sep + "atomic_masses.pkl")
     n_p, n_n = cnsts.NZ[atom]
     M = ams[(ams['N'] == n_n) & (ams['Z'] == n_p)]['mass[micro-u]'].values[0]
@@ -624,6 +740,8 @@ def atomic_mass(atom):
     return M
 
 def import_vanHoof2014(errors=False):
+    from .. import cfg
+
     datafile = os.sep.join([cfg.dcys['files'], "vanHoofetal2014.data"])
 
     with open(datafile, 'rt') as f:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Union, Tuple
+from typing import Any, Callable, Iterable, Union, Tuple
 from functools import wraps
 import numpy as np
 import scipy.constants as con
@@ -11,11 +11,13 @@ from matplotlib.ticker import AutoLocator, AutoMinorLocator, FuncFormatter
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 import astropy.units as u
 from astropy.io import fits
+import numpy.typing as npt
+from scipy.optimize import curve_fit
 
 
-def catch_exception(func):
+def catch_exception(func: Callable):
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args, **kwargs) -> Any:
         """Wrapper function"""
         import traceback
 
@@ -372,9 +374,6 @@ def plot_mass_volume_slices(jm: 'JetModel', show_plot: bool = False,
     ax2b.patch.set_facecolor('white')
 
     if savefig:
-        # TODO: Put this in appropriate place in JetModel class
-        # jm.log.add_entry("INFO",
-        #                    "Diagnostic plot saved to " + savefig)
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
     if show_plot:
@@ -409,11 +408,6 @@ def diagnostic_plot(jm: 'JetModel', show_plot: bool = False,
     inc = jm.params['geometry']['inc']
     pa = jm.params['geometry']['pa']
     if inc != 90. or pa != 0.:
-        # TODO: Put this in appropriate place in JetModel class
-        # jm.log.add_entry("WARNING",
-        #                    "Diagnostic plots may be increasingly "
-        #                    "inaccurate for inclined or rotated jets"
-        #                    " (i.e. i != 90 deg or pa != 0 deg")
         return None
 
     # Conservation of mass, angular momentum and energy
@@ -465,9 +459,6 @@ def diagnostic_plot(jm: 'JetModel', show_plot: bool = False,
     plt.subplots_adjust(wspace=0, hspace=0)
 
     if savefig:
-        # TODO: Put this in appropriate place in JetModel class
-        # jm.log.add_entry("INFO",
-        #                    "Diagnostic plot saved to " + savefig)
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
 
     if show_plot:
@@ -699,9 +690,6 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
         cax.minorticks_on()
 
     if savefig:
-        # TODO: Put this log entry in appropriate place in JetModel class
-        # jm.log.add_entry("INFO",
-        #                    "Model plot saved to " + savefig)
         plt.savefig(savefig, bbox_inches='tight', dpi=300)
         plt.close('all')
 
@@ -867,9 +855,6 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
 #         cax.minorticks_on()
 #
 #     if savefig:
-#         # TODO: Put this in appropriate place in JetModel class
-#         # jm.log.add_entry("INFO",
-#         #                    "Radio plot saved to " + savefig)
 #         plt.savefig(savefig, bbox_inches='tight', dpi=300)
 #
 #     if show_plot:
@@ -877,6 +862,7 @@ def model_plot(jm: 'JetModel', show_plot: bool = False,
 #
 #     return None
 
+@catch_exception
 def rt_plot(run: 'ContinuumRun', percentile: float = 5.,
             show_plot: bool = False, savefig: Union[bool, str] = False):
     """
@@ -948,7 +934,7 @@ def rt_plot(run: 'ContinuumRun', percentile: float = 5.,
     hdr_ems, ems = load_fits_hdr_and_data(run.fits_em)
 
     # TODO: This is where image cubes with more than one channel won't be
-    #  represented correctly
+    #  represented correctly i.e. RRL run data products
     flux = flux[0] if len(flux.shape) == 3 else flux
     taus = taus[0] if len(taus.shape) == 3 else taus
     ems = ems[0] if len(ems.shape) == 3 else ems
@@ -1312,13 +1298,47 @@ def geometry_plot(jm: 'JetModel', show_plot: bool = False,
 
 def sed_plot(pline: 'Pipeline', plot_time: float,
              plot_reynolds: bool = True,
+             plot_difference: bool = False,
              savefig: Union[bool, str] = False) -> None:
+    """
+    Plot the Spectral Energy Distribution (SED) of a successful pipeline
+    execution
+
+    Parameters
+    ----------
+    pline
+        Pipeline instance
+    plot_time
+        Model-time at which to plot the SED
+    plot_reynolds
+        Whether to plot the flux/spectral index as predicted by Reynolds (1986).
+        Grey, red and blue lines represent the approximated (integrated over the
+        whole sky) flux, the Reynolds model flux integrated over the length of
+        the model, and spectral index of the flux integrated over the length of
+        the model, respectively. True by default.
+    plot_difference
+        Whether to plot the difference between the model flux/spectral index and
+        that predicted by Reynolds (1986) as a subplot on top of the main plot.
+        False by default.
+    savefig
+        Full path to save the figure to, or False if not to save. False by
+        default
+
+    Returns
+    -------
+    matplotlib.pylab.Figure and matplotlib.pylab.Axes instance(s) create/used
+    """
     import matplotlib.pylab as plt
     from RaJePy.maths import physics as mphys
     from RaJePy import _config as cfg
 
-    freqs, fluxes = [], []
+    l_z = (pline.model.nz * pline.model.csize /
+           pline.model.params['target']['dist'])
+    l_z = pline.model.params['grid']['l_z']
+
+    freqs, fluxes, dfluxes, r86fluxes = [], [], [], []
     freqs_imfit, fluxes_imfit, efluxes_imfit = [], [], []
+    dfluxes_imfit, defluxes_imfit, r86fluxes_imfit = [], [], []
     for idx, run in enumerate(pline.runs):
         if run.year == plot_time:
             if run.completed and run.obs_type == 'continuum':
@@ -1327,6 +1347,13 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                 fluxes.append(flux)
                 freqs.append(run.freq)
 
+                fr = mphys.flux_expected_r86(pline.model, run.freq, 'R',
+                                             l_z * 0.5)
+                fb = mphys.flux_expected_r86(pline.model, run.freq, 'B',
+                                             l_z * 0.5)
+                r86fluxes.append(fr + fb)
+                dfluxes.append((flux - (fr + fb)) / (fr + fb) * 100)
+
                 # imfit fluxes
                 if run.simobserve and run.results['imfit'] is not None:
                     flux_imfit = run.results['imfit']['I']['val']
@@ -1334,6 +1361,10 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                     fluxes_imfit.append(flux_imfit)
                     efluxes_imfit.append(eflux_imfit)
                     freqs_imfit.append(run.freq)
+                    r86fluxes_imfit.append(fr + fb)
+                    dfluxes_imfit.append((flux_imfit - (fr + fb)) /
+                                         (fr + fb) * 100)
+                    defluxes_imfit.append(eflux_imfit)
 
     freqs = np.array(freqs)
     fluxes = np.array(fluxes)
@@ -1341,13 +1372,16 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
     xlims = (10 ** (np.log10(np.min(freqs)) - 0.5),
              10 ** (np.log10(np.max(freqs)) + 0.5))
 
-    alphas = []
+    alphas, dalphas = [], []
     for n in np.arange(1, len(fluxes)):
-        alphas.append(np.log10(fluxes[n] /
-                               fluxes[n - 1]) /
+        alphas.append(np.log10(fluxes[n] / fluxes[n - 1]) /
                       np.log10(freqs[n] / freqs[n - 1]))
+        dalphas.append(alphas[-1] - np.log10((r86fluxes[n]) /
+                                             (r86fluxes[n - 1])) /
+                                    np.log10(freqs[n] / freqs[n - 1]))
 
     alphas_imfit, ealphas_imfit = [], []
+    dalphas_imfit, dealphas_imfit = [], []
     for n in np.arange(1, len(fluxes_imfit)):
         alphas_imfit.append(np.log10(fluxes_imfit[n] /
                                      fluxes_imfit[n - 1]) /
@@ -1358,12 +1392,27 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
                                  fluxes_imfit[n - 1] * c)) ** 2.)
         ealphas_imfit.append(ealpha)
 
-    l_z = (pline.model.nz * pline.model.csize /
-           pline.model.params['target']['dist'])
+        dalphas_imfit.append(
+            alphas_imfit[-1] - np.log10(r86fluxes_imfit[n] /
+                                        r86fluxes_imfit[n - 1]) /
+                               np.log10(freqs_imfit[n] / freqs_imfit[n - 1])
+        )
+        dealphas_imfit.append(ealpha)
 
     plt.close('all')
 
-    fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
+    if not plot_difference:
+        fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
+    else:
+        from matplotlib.gridspec import GridSpec
+
+        fig = plt.figure(figsize=(cfg.plots["dims"]["column"],
+                                  cfg.plots["dims"]["column"] * 6. / 5.))
+        gs1 = GridSpec(5, 6, wspace=0., hspace=0.)
+        ax1 = fig.add_subplot(gs1[1:, :])
+        ax3 = fig.add_subplot(gs1[:1, :])
+        ax4 = ax3.twinx()
+
     ax2 = ax1.twinx()
 
     # Alphas are calculated at the middle of two neighbouring frequencies
@@ -1432,6 +1481,39 @@ def sed_plot(pline: 'Pipeline', plot_time: float,
     ax2.spines['right'].set_color('b')
     ax2.yaxis.label.set_color('b')
     ax2.minorticks_on()
+
+    if plot_difference:
+        ax3.set_xscale('log')
+        ax3.plot(freqs, dfluxes, mec='maroon', ls='-', mfc='r', lw=2, c='r',
+                 zorder=3, marker=None, markersize=5)
+        ax3.errorbar(freqs_imfit, dfluxes_imfit, yerr=defluxes_imfit,
+                     ecolor='r', ls='None', capsize=2)
+        ax4.plot(freqs_a, dalphas, c='b', ls='-', mec='b', marker=None,
+                 mfc='cornflowerblue', lw=2, zorder=2, markersize=5)
+
+        # ax3.set_ylabel(r'$\Delta S_\nu \, \left[ {\rm Jy} \right]$', color='k')
+        ax3.set_ylabel(r'$\Delta S_\nu \, \left[ {\rm \%} \right]$', color='k')
+        ax4.set_ylabel(r'$\Delta\alpha$', color='b')
+
+        ax3.minorticks_on()
+        ax3.xaxis.set_tick_params(labelbottom=False)
+
+        ax3.set_xlim(xlims)
+        ax3.tick_params(which='both', direction='in', top=True)
+        ax4.tick_params(which='both', direction='in', color='b')
+        ax4.tick_params(axis='y', which='both', colors='b')
+        ax4.spines['right'].set_color('b')
+        ax4.yaxis.label.set_color('b')
+        ax4.minorticks_on()
+
+        ax3.set_ylim((-np.max(np.abs(ax3.get_ylim())),
+                      +np.max(np.abs(ax3.get_ylim()))))
+        ax4.set_ylim((-np.max(np.abs(ax4.get_ylim())),
+                      +np.max(np.abs(ax4.get_ylim()))))
+        ax3: plt.Axes
+        ax3.hlines(0., *ax3.get_xlim(), ls=':', colors='grey')
+
+    ax1.set_xlim(xlims)
 
     title = "Radio SED plot at t={:.0f}yr for jet model '{}'"
     title = title.format(plot_time, pline.model.params['target']['name'])
@@ -1803,6 +1885,179 @@ def timelapse_animation(pline: 'Pipeline', tscop: Tuple[str, str], freq: float,
     anim.save(save_file, fps=10)
 
     return None
+
+
+def rrl_sed(model: 'JetModel', rrl_runs: Iterable['RRLRun'], contsub: bool = True,
+            unit: str = 'Jy', show_plot: bool = False,
+            savefig: Union[bool, str] = False):
+    """
+    Plot the spectral energy distribution of an RRL line (flux vs v_lsr)
+
+    Parameters
+    ----------
+    model
+        JetModel instance
+    rrl_runs
+        Compeleted RRLRun instances to plot
+    contsub
+        Subtract the continuum? Default is True. This is done by fitting line
+        free channels with a simple power-law and then subtracting from the
+        fluxes
+    unit
+        Unit to plot the flux in. One of 'Jy', 'mJy', 'uJy', 'nJy', and '%'.
+        If '%', contsub must be True. Default is 'Jy'
+    show_plot
+        Whether to display the plot to the screen. Default is True
+    savefig
+        Full path to save the plot to, or False. If False, no plot is saved
+        (default)
+
+    Returns
+    -------
+        None
+    """
+    from .. import cfg
+    from ..maths.physics import v_rot
+    from ..maths.physics import freq_to_vlsr, nu_rrl
+    from ..maths.rrls import rrl_parser
+
+    def log_plaw(logx: Union[float, npt.NDArray], m: float, c: float):
+        """Logarithmic power law"""
+        return logx * m + c
+
+    def mask_line_channels(run: 'RRLRun',
+                           model: 'JetModel') -> npt.NDArray[bool]:
+        """
+        Calculate the mask of which channels of an RRLRun are likely to contain line
+        emission given a jet model. True indicates the likely presence of line
+        emission.
+        """
+
+
+        atom, n, dn = rrl_parser(run.line)
+        nu0 = nu_rrl(n, dn, atom)
+        vlsrs = freq_to_vlsr(run.chan_freqs, nu0) / 1e3  # m/s to km/s
+
+        inc = model.params['geometry']['inc']  # deg
+        vlsr_yso = model.params['target']['v_lsr']  # km/s
+        v0 = model.params['properties']['v_0']  # km/s
+
+        v_rot_max = v_rot(model.params['target']['R_1'], 1.,
+                          model.params['geometry']['epsilon'],
+                          model.params['target']['M_star'])  # km/s
+
+        v_r_los = v0 * np.sin(np.radians(90 - inc))
+        v_rot_max_los = v_rot_max * np.cos(np.radians(90 - inc))
+
+        blue_jet_v_los_range = np.array([-v_r_los - v_rot_max_los,
+                                         -v_r_los + v_rot_max_los]) + vlsr_yso
+        blue_jet_mask = ((vlsrs >= blue_jet_v_los_range[0]) &
+                         (vlsrs <= blue_jet_v_los_range[1]))
+
+        red_jet_v_los_range = np.array([v_r_los - v_rot_max_los,
+                                        v_r_los + v_rot_max_los]) + vlsr_yso
+        red_jet_mask = ((vlsrs >= red_jet_v_los_range[0]) &
+                        (vlsrs <= red_jet_v_los_range[1]))
+
+        return blue_jet_mask | red_jet_mask
+
+    units_facs = {'Jy': lambda flux, _=1.: flux,
+                  'mJy': lambda flux, _=1.: flux * 1e3,
+                  'uJy': lambda flux, _=1.: flux * 1e6,
+                  'nJy': lambda flux, _=1.: flux * 1e9,
+                  '%': lambda flux_rrl,
+                              flux_total: flux_rrl / flux_total * 100.}
+    unit_labels = {'Jy': r'\mathrm{Jy}',
+                   'mJy': r'\mathrm{mJy}',
+                   'uJy': r'\mathrm{\mu Jy}',
+                   'nJy': r'\mathrm{nJy}',
+                   '%': r'\%'}
+
+    if contsub:
+        axes_labels = {'Jy': r'S_\nu^\mathrm{RRL}',
+                       '%': r'\frac{S_\nu^\mathrm{RRL}}{S_\nu}'}
+    else:
+        axes_labels = {'Jy': r'S_\nu', }
+
+    axes_labels = axes_labels | {'mJy': axes_labels['Jy'],
+                                 'uJy': axes_labels['Jy'],
+                                 'nJy': axes_labels['Jy']}
+
+    if not contsub and unit == '%':
+        raise ValueError('Using % as a unit only allowed if subtracting '
+                         'continuum')
+
+    fig, ax1 = plt.subplots(1, 1, figsize=[cfg.plots["dims"]["column"]] * 2)
+
+    # ax1.set_yscale('log')
+    ax1.set_xlabel(r'$v_{\rm LSR} \, \left[ \mathrm{km \, s^{-1}} \right]$')
+
+    xlims = [1e30, 1e-30]
+
+    for rrl_run in rrl_runs:
+        atom, n, dn = rrl_parser(rrl_run.line)
+        nu0 = nu_rrl(n, dn, atom)
+        vlsrs = freq_to_vlsr(rrl_run.chan_freqs, nu0) / 1e3
+        fluxes = rrl_run.results['flux']
+
+        if np.nanmin(vlsrs) < xlims[0]:
+            xlims[0] = np.nanmin(vlsrs)
+
+        if np.nanmax(vlsrs) > xlims[1]:
+            xlims[1] = np.nanmax(vlsrs)
+
+        if contsub:
+            mask = ~mask_line_channels(rrl_runs[0], model)
+            continuum_only_freqs = rrl_run.chan_freqs[mask]
+            continuum_only_fluxes = rrl_run.results['flux'][mask]
+            popt = curve_fit(log_plaw,
+                             np.log10(continuum_only_freqs),
+                             np.log10(continuum_only_fluxes))[0]
+            dfluxes = fluxes - 10 ** log_plaw(np.log10(rrl_run.chan_freqs),
+                                              *popt)
+
+            ax1.plot(vlsrs, units_facs[unit](dfluxes, fluxes),
+                     ls='-', lw=2, zorder=3, label=rrl_run.line)
+
+        else:
+            ax1.plot(vlsrs, units_facs[unit](fluxes),
+                     ls='-', lw=2, zorder=3, label=rrl_run.line)
+
+    ax1.set_ylabel(r'$' + axes_labels[unit] + r' \, '
+                                              r'\left[ ' + unit_labels[
+                       unit] + r' \right]$')
+
+    xlims = (-model.params['properties']['v_0'] * 2,
+             +model.params['properties']['v_0'] * 2)
+    ylims = ax1.get_ylim()
+    ax1.plot((model.params['target']['v_lsr'], model.params['target']['v_lsr']),
+             ylims, dashes=[1, 1], color='grey', zorder=1)
+
+    vlsr_yso = model.params['target']['v_lsr']  # km/s
+    ax1.plot((vlsr_yso, vlsr_yso), ylims, ls='-', color='lightgrey')
+
+    # v_0 = model.params['properties']['v_0']
+    # inc = model.params['geometry']['inc']
+    # v_jet_los = v_0 * np.sin(np.radians(90. - inc))
+    # ax1.plot((vlsr_yso + v_jet_los, vlsr_yso + v_jet_los), ylims,
+    #          dashes=[0, 1, 1, 3, 0], color='r')
+    # ax1.plot((vlsr_yso - v_jet_los, vlsr_yso - v_jet_los), ylims,
+    #          dashes=[1, 3], color='b')
+
+    ax1.set_xlim(xlims)
+    ax1.set_ylim(ylims)
+
+    ax1.minorticks_on()
+    ax1.tick_params(which='both', direction='in', top=True, right=True)
+
+    ax1.legend()
+
+    if savefig:
+        metadata = cfg.plots['metadata']['png' if 'png' in savefig else 'pdf']
+        fig.savefig(savefig, bbox_inches='tight', metadata=metadata, dpi=300)
+
+    if show_plot:
+        plt.show()
 
 
 if __name__ == '__main__':

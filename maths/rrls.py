@@ -428,7 +428,8 @@ kappa_l_average = np.vectorize(kappa_l_average)
 def line_intensity_lte(freq: Union[float, Iterable, np.ndarray],
                        temp: Union[float, Iterable, np.ndarray],
                        tau_c: Union[float, Iterable, np.ndarray],
-                       tau_l: Union[float, Iterable, np.ndarray]) -> Union[float, Iterable, np.ndarray]:
+                       tau_l: Union[float, Iterable, np.ndarray]
+                       ) -> Union[float, Iterable, np.ndarray]:
     """
     Intensity of the RRL assuming local thermodynamic equilibrium (LTE).
     Equation 2.122 of Gordon & Sorochenko (2002).
