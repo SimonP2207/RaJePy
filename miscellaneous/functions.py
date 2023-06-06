@@ -140,20 +140,20 @@ def check_pline_params(params):
 
     keys = {'min_el': float,
             'dcys': (('model_dcy', str),),
-            'continuum': (('times', (np.ndarray, np.float)),
-                          ('freqs', (np.ndarray, np.float)),
+            'continuum': (('times', (np.ndarray, float)),
+                          ('freqs', (np.ndarray, float)),
                           ('t_obs', (np.ndarray, np.integer)),
                           ('tscps', (np.ndarray, np.ndarray)),
                           ('t_ints', (np.ndarray, np.integer)),
-                          ('bws', (np.ndarray, np.float)),
-                          ('chanws', (np.ndarray, np.float))),
-            'rrls': (('times', (np.ndarray, np.float)),
-                     ('lines', (np.ndarray, np.str)),
+                          ('bws', (np.ndarray, float)),
+                          ('chanws', (np.ndarray, float))),
+            'rrls': (('times', (np.ndarray, float)),
+                     ('lines', (np.ndarray, str)),
                      ('t_obs', (np.ndarray, np.integer)),
                      ('tscps', (np.ndarray, np.ndarray)),
                      ('t_ints', (np.ndarray, np.integer)),
-                     ('bws', (np.ndarray, np.float)),
-                     ('chanws', (np.ndarray, np.float)))
+                     ('bws', (np.ndarray, float)),
+                     ('chanws', (np.ndarray, float)))
             }
 
     e = _param_key_check(params, keys)

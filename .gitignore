@@ -9,3 +9,5 @@ venv
 **/*.ipynb
 environment.yaml
 testing.py
+**/*~
+**/*swp

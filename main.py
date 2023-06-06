@@ -48,7 +48,7 @@ if __name__ == '__main__':
 
         # Set up common log for JetModel and Pipeline instances
         log_name = "ModelRun_"
-        log_name += time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())
+        log_name += time.strftime("%Y-%m-%d-%H%M%S", time.localtime())
         log_name += ".log"
         logfile = os.sep.join([jp.params['dcys']['model_dcy'], log_name])
         log = logger.Log(fname=logfile)

@@ -32,7 +32,7 @@ def catch_exception(func: Callable):
 
 def equalise_axes(ax, fix_x=False, fix_y=False, fix_z=False):
     """
-    Equalises the x/y/z axes of a matplotlib.axes._subplots.AxesSubplot
+    Equalizes the x/y/z axes of a matplotlib.axes._subplots.AxesSubplot
     instance. Autodetects if 2-D, 3-D, linear-scaling or logarithmic-scaling.
     fix_x/fix_y/fix_z is to fix the x, y or z scales of the plot and work
     the other axes limits around it, potentially chopping off data points. Only
